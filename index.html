@@ -1,653 +1,1927 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>LærbarXR Quest Player</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LærbarXR Builder</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#f8f9fa;
+  --surface:#ffffff;
+  --border:#e1e4e8;
+  --text:#24292f;
+  --accent:#0969da;
+  --accent-hover:#0860ca;
+  --green:#1a7f37;
+  --red:#d1242f;
+  --muted:#6e7781;
+  --grid:#e8eaed;
+  --shadow:0 1px 3px rgba(31,35,40,0.12);
+  --shadow-lg:0 8px 24px rgba(140,149,159,0.2);
+}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+  background:var(--bg);color:var(--text);height:100vh;overflow:hidden
+}
 
-  <!-- ============================================================
-       OFFLINE / SIDELOAD DEPLOYMENT (no wifi on the Quest):
-       1. Download these two files next to this HTML:
-            three.module.js  (from the jsdelivr URL in the importmap below)
-            jszip.min.js     (from the cdnjs URL below)
-       2. Change the cdnjs URL below to  ./jszip.min.js
-       3. Change the importmap "three" URL below to  ./three.module.js
-       That is the entire vendoring step. Hosted-online deployments need no change.
-       ============================================================ -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script type="importmap">
-  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js" } }
-  </script>
+/* Layout */
+.app{display:flex;height:100vh}
+.panel{width:450px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;box-shadow:var(--shadow); z-index:20;}
+.canvas-wrap{flex:1;position:relative;overflow:hidden;background:var(--bg);cursor:grab}
+.canvas-wrap.panning{cursor:grabbing}
+/* FIX #3: the canvas is now a large WORLD surface moved by a translate+scale
+   transform (origin 0 0). Pan = translate, zoom = scale; wrap clips the view. */
+.canvas{
+  width:6000px;height:4000px;position:relative;
+  background-image:radial-gradient(circle,#d4d4d8 1px,transparent 1px);
+  background-size:20px 20px;
+  transform-origin:0 0;
+  will-change:transform;
+}
 
-  <style>
-    :root {
-      --primary: #0969da;
-      --primary-hover: #0855b3;
-      --bg: #f3f4f6;
-      --card-bg: rgba(255, 255, 255, 0.95);
-      --text: #1f2937;
-      --text-muted: #6b7280;
-    }
-    body { margin: 0; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); }
-    #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 9000; padding: 20px; box-sizing: border-box; background: radial-gradient(circle at center, #e5e7eb 0%, #9ca3af 100%); }
-    .card { background: var(--card-bg); border-radius: 20px; padding: 32px 40px; box-shadow: 0 20px 40px rgba(0,0,0,0.15); max-width: 440px; width: 100%; text-align: center; backdrop-filter: blur(10px); }
-    .logo-container { margin-bottom: 24px; }
-    h1 { margin: 0 0 8px 0; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
-    p.subtitle { margin: 0 0 28px 0; color: var(--text-muted); font-size: 15px; }
-    .file-drop-area { position: relative; display: flex; flex-direction: column; align-items: center; padding: 32px 20px; border: 2px dashed #cbd5e1; border-radius: 16px; background: #f8fafc; cursor: pointer; transition: all 0.2s; margin-bottom: 20px; }
-    .file-drop-area:hover { border-color: var(--primary); background: #f0f7ff; }
-    .file-drop-area span { font-size: 16px; font-weight: 600; color: var(--primary); }
-    .file-drop-area small { color: var(--text-muted); margin-top: 8px; }
-    #file-input { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-    #session-info { font-size: 16px; color: #059669; margin-bottom: 24px; font-weight: 600; min-height: 24px; background: #ecfdf5; padding: 12px; border-radius: 8px; display: none; }
-    #session-info.show { display: block; }
-    #start-button { padding: 16px 32px; font-size: 18px; background: var(--primary); color: white; border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(9, 105, 218, 0.3); cursor: pointer; transition: all 0.2s; font-weight: 600; width: 100%; }
-    #start-button:hover:not(:disabled) { transform: translateY(-2px); background: var(--primary-hover); box-shadow: 0 6px 16px rgba(9, 105, 218, 0.4); }
-    #start-button:disabled { background: #e2e8f0; color: #94a3b8; cursor: not-allowed; box-shadow: none; }
-    #status { position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); background: rgba(17, 24, 39, 0.9); color: white; padding: 14px 28px; border-radius: 30px; font-size: 15px; font-weight: 500; display: none; z-index: 9999; backdrop-filter: blur(4px); }
-    .exit-xr { position: fixed; top: 24px; right: 24px; background: rgba(255,255,255,0.9); color: #111; border: none; border-radius: 50%; width: 50px; height: 50px; display: none; align-items: center; justify-content: center; font-size: 28px; cursor: pointer; z-index: 9999; font-weight: 300; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-    .xr-active .exit-xr { display: flex; }
-    .xr-active #overlay { display: none; }
-    video { display: none; }
-  </style>
+/* FIX #3: pan/zoom view controls */
+.view-controls{
+  position:absolute;top:16px;left:16px;z-index:50;display:flex;gap:2px;
+  align-items:center;background:var(--surface);border:1px solid var(--border);
+  border-radius:8px;padding:4px;box-shadow:var(--shadow);
+}
+.view-controls button{
+  background:transparent;border:none;border-radius:6px;padding:4px 10px;
+  cursor:pointer;font-size:13px;color:var(--text);transition:background 0.2s;
+}
+.view-controls button:hover{background:#f6f8fa}
+.view-controls .zoom-label{font-size:11px;color:var(--muted);padding:0 6px;min-width:40px;text-align:center}
+
+/* Panel Sections */
+.panel-header{padding:20px;border-bottom:1px solid var(--border)}
+.panel-header h1{font-size:20px;font-weight:600;margin-bottom:12px}
+.panel-tools{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;background:#fafbfc}
+.panel-content{flex:1;overflow-y:auto;padding:16px}
+.panel-footer{padding:16px;border-top:1px solid var(--border);background:#fafbfc}
+
+/* Inspector */
+.inspector{display:none;animation:slideIn 0.3s ease}
+.inspector.active{display:block}
+@keyframes slideIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+
+/* Buttons & Inputs */
+.btn{
+  background:var(--accent);border:none;border-radius:6px;padding:8px 16px;
+  color:#fff;cursor:pointer;font-size:13px;font-weight:500;
+  transition:all 0.2s;display:inline-flex;align-items:center;justify-content:center;gap:6px
+}
+.btn:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:var(--shadow)}
+.btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
+.btn.secondary:hover{background:#f6f8fa;border-color:var(--accent)}
+.btn.mini{padding:6px 10px;font-size:12px}
+.btn.danger{background:var(--red)}
+.btn.success{background:var(--green)}
+.btn:disabled{opacity:0.5;cursor:not-allowed}
+
+input,textarea,select{
+  width:100%;background:var(--surface);border:1px solid var(--border);
+  border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;
+  transition:border 0.2s
+}
+input[type="color"]{padding:2px 4px;height:30px;cursor:pointer;}
+input[type="range"]{padding:0;height:4px;background:var(--border);appearance:none;border-radius:2px;cursor:pointer;}
+input[type="range"]::-webkit-slider-thumb{appearance:none;width:12px;height:12px;background:var(--accent);border-radius:50%;}
+input:focus,textarea:focus,select:focus{
+  outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(9,105,218,0.1)
+}
+label{
+  display:block;margin:0 0 6px;font-size:12px;font-weight:600;color:var(--text)
+}
+
+.field-group{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:8px;padding:16px;margin-bottom:16px
+}
+.field-group h3{font-size:14px;font-weight:600;margin-bottom:12px;color:var(--text)}
+
+.slider-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.slider-row label { margin:0; font-size: 11px; flex:1; display:flex; flex-direction:column; font-weight:normal; }
+.slider-row input[type=range] { width: 100%; margin-top: 4px; }
+
+/* Nodes */
+.node{
+  position:absolute;width:160px;height:120px;border-radius:12px;
+  background:var(--surface);border:2px solid var(--border);
+  cursor:move;transition:all 0.2s;overflow:hidden;box-shadow:var(--shadow);
+  z-index:10;
+}
+.node:hover{transform:scale(1.02);box-shadow:var(--shadow-lg)}
+.node.selected{
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px rgba(9,105,218,0.1),var(--shadow-lg)
+}
+.node.start{border-color:var(--green)}
+
+.node-thumb{
+  position:absolute;inset:0;background-size:cover;
+  background-position:center;opacity:0.3
+}
+.node-content{
+  position:relative;height:100%;display:flex;flex-direction:column;
+  padding:12px
+}
+.node-title{font-size:13px;font-weight:600;margin-bottom:4px;word-break:break-word;}
+.node-type{font-size:11px;color:var(--muted);margin-bottom:8px}
+.node-icons{
+  position:absolute;bottom:8px;left:12px;display:flex;gap:4px;
+  font-size:14px
+}
+.node-badge{
+  position:absolute;top:8px;right:8px;background:var(--green);
+  color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600
+}
+
+/* Connections */
+.connection{
+  position:absolute;pointer-events:none;z-index:1;width:100%;height:100%;left:0;top:0;
+}
+.connection svg{position:absolute;width:100%;height:100%;overflow:visible;}
+.connection path{fill:none;stroke-width:2;stroke-linecap:round;transition:stroke 0.3s, stroke-width 0.3s;}
+.connection.default path{stroke:#a0aec0;stroke-dasharray:5,5;animation:dash-flow 20s linear infinite;}
+.connection.correct path{stroke:var(--green);stroke-width:3;stroke-dasharray:8,4;animation:dash-flow-fast 10s linear infinite;}
+.connection.incorrect path{stroke:var(--red);stroke-width:2;stroke-dasharray:4,8;animation:dash-flow 15s linear infinite;}
+@keyframes dash-flow{to{stroke-dashoffset:-100}}
+@keyframes dash-flow-fast{to{stroke-dashoffset:-60}}
+
+/* Add Menu */
+.add-menu{position:fixed;bottom:24px;right:24px;z-index:100}
+.add-btn{
+  width:56px;height:56px;border-radius:50%;background:var(--accent);
+  border:none;color:#fff;font-size:24px;cursor:pointer;
+  box-shadow:0 4px 12px rgba(9,105,218,0.3);transition:all 0.3s
+}
+.add-btn:hover{transform:rotate(90deg) scale(1.1);background:var(--accent-hover)}
+.add-options{
+  position:absolute;bottom:70px;right:0;display:none;
+  flex-direction:column;gap:8px;min-width:150px
+}
+.add-options.show{display:flex}
+.add-opt{
+  background:var(--surface);border:1px solid var(--border);
+  padding:10px 16px;border-radius:8px;white-space:nowrap;
+  cursor:pointer;font-size:13px;box-shadow:var(--shadow);
+  transition:all 0.2s
+}
+.add-opt:hover{background:var(--accent);color:#fff;transform:translateX(-4px)}
+
+/* Quick Actions */
+.quick-actions{display:flex;gap:8px;margin-top:12px}
+.action-btn{
+  flex:1;padding:8px;border:1px solid var(--border);border-radius:6px;
+  background:var(--surface);color:var(--text);font-size:12px;
+  cursor:pointer;transition:all 0.2s
+}
+.action-btn:hover{background:#f6f8fa;border-color:var(--accent)}
+
+/* Overlays Config Items */
+.overlay-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.overlay-item{
+  background:#f6f8fa;border:1px solid var(--border);
+  border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px
+}
+.overlay-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.overlay-controls input[type="number"]{width:70px}
+.overlay-remove{
+  background:var(--red);border:none;color:#fff;
+  padding:4px 8px;border-radius:4px;cursor:pointer;
+  font-size:11px;transition:all 0.2s;margin-left:auto;
+}
+.overlay-remove:hover{background:#b91c1c}
+
+/* Preview Modal */
+.preview-modal{
+  position:fixed;inset:0;background:rgba(0,0,0,0.8);
+  display:none;align-items:center;justify-content:center;z-index:1000
+}
+.preview-modal.show{display:flex}
+.preview-content{
+  background:var(--surface);border-radius:12px;
+  width:95%;max-width:1000px;height:85vh;
+  display:flex;flex-direction:column;box-shadow:var(--shadow-lg)
+}
+.preview-header{
+  padding:16px 20px;border-bottom:1px solid var(--border);
+  display:flex;justify-content:space-between;align-items:center
+}
+.preview-header h2{font-size:18px;font-weight:600}
+.preview-body{
+  flex:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  padding:20px;overflow:auto;position:relative;background:#000;
+}
+.preview-nav{
+  padding:16px 20px;border-top:1px solid var(--border);
+  display:flex;justify-content:center;gap:12px;background:#fafbfc;
+}
+
+/* Asset List */
+.asset-list-box {
+    margin-top:12px; font-size:11px; color:var(--text);
+}
+.asset-group { margin-bottom: 8px; }
+.asset-group-title { font-weight: 600; margin-bottom: 4px; font-size: 12px; }
+.asset-items { 
+    max-height: 120px; overflow-y: auto; background: #f6f8fa; 
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px;
+}
+.asset-item-row {
+    padding: 4px 6px; border-bottom: 1px solid var(--border);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.asset-item-row:last-child { border-bottom: none; }
+
+/* Status */
+.status{
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+  background:var(--text);color:#fff;padding:12px 20px;
+  border-radius:8px;display:none;z-index:1001;box-shadow:var(--shadow-lg)
+}
+.status.show{display:block}
+
+/* Loading Spinner */
+.loader{
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  z-index:2000;background:rgba(255,255,255,0.95);padding:30px;
+  border-radius:12px;box-shadow:var(--shadow-lg);text-align:center;
+}
+.loader-spinner{
+  border:4px solid #f3f3f3;border-top:4px solid var(--accent);
+  border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;
+  margin:0 auto;
+}
+@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+.loader-text{margin-top:15px;font-size:14px;font-weight:600;color:var(--text)}
+
+/* Common overlays inside preview */
+.preview-choice{
+  background:var(--surface);border:2px solid var(--border);color:var(--text);
+  padding:10px 16px;border-radius:8px;cursor:pointer;
+  transition:all 0.2s;text-align:center;font-size:14px; margin-top:8px;
+}
+.preview-choice:hover{
+  background:#f6f8fa;border-color:var(--accent);
+  transform:translateY(-2px);box-shadow:var(--shadow)
+}
+.preview-choice.correct{border-color:var(--green);background:#f0fdf4}
+.preview-choice.incorrect{border-color:var(--red);background:#fef2f2}
+</style>
 </head>
 <body>
-  <!-- Audio is intentionally ON (training narration). playsinline keeps it inline on mobile. -->
-  <video id="video" playsinline crossorigin="anonymous"></video>
 
-  <div id="overlay">
-    <div class="card">
-      <div class="logo-container">
-        <h1>LærbarXR Player</h1>
-        <p class="subtitle">Immersive Gaze-Controlled Training</p>
+<datalist id="colorPresets">
+  <option value="#ffffff">White</option>
+  <option value="#e1e4e8">Gray</option>
+  <option value="#000000">Black</option>
+  <option value="#d1242f">Red</option>
+  <option value="#0969da">Blue</option>
+  <option value="#1a7f37">Green</option>
+</datalist>
+
+<div class="app">
+  <div class="panel">
+    <div class="panel-header">
+      <h1>🎬 LærbarXR Builder</h1>
+      <input id="projectTitle" placeholder="Enter project title..." value="My 360° Scenario" onchange="App.saveState()">
+    </div>
+    
+    <div class="panel-tools">
+      <button class="btn secondary mini" onclick="App.undo()">↩ Undo</button>
+      <button class="btn secondary mini" onclick="App.preview()">▶ Preview</button>
+      <button class="btn secondary mini" onclick="App.save()">💾 Save</button>
+      <button class="btn secondary mini" onclick="App.load()">📁 Load</button>
+      <input type="file" id="loader" accept=".lxr,.zip" style="display:none" onchange="App.loadFile(event)">
+    </div>
+    
+    <div class="panel-content">
+      <div id="inspector" class="inspector"></div>
+      
+      <div id="defaultView">
+        <div class="field-group">
+          <h3>🚀 Quick Start</h3>
+          <p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">
+            Build immersive 360° experiences. Each video can have questions with answer-based navigation and timed text overlays.
+          </p>
+          <button class="btn" style="width:100%" onclick="App.addNode('video')">
+            + Add Video Node
+          </button>
+        </div>
+        
+        <div class="field-group">
+          <h3>📦 Assets Library</h3>
+          <div class="quick-actions">
+            <input type="file" id="videoFiles" accept="video/mp4,video/webm" multiple style="display:none" onchange="App.addVideos(event)">
+            <input type="file" id="imageFiles" accept="image/*" multiple style="display:none" onchange="App.addImages(event)">
+            <button class="action-btn" onclick="document.getElementById('videoFiles').click()">📹 Add Videos</button>
+            <button class="action-btn" onclick="document.getElementById('imageFiles').click()">🖼 Add Images</button>
+          </div>
+          
+          <div class="asset-list-box">
+             <div class="asset-group">
+                <div class="asset-group-title">Videos (<span id="videoCount">0</span>)</div>
+                <div class="asset-items" id="videoList"><i>No videos uploaded yet</i></div>
+             </div>
+             <div class="asset-group">
+                <div class="asset-group-title">Images (<span id="imageCount">0</span>)</div>
+                <div class="asset-items" id="imageList"><i>No images uploaded yet</i></div>
+             </div>
+          </div>
+        </div>
+        
+        <div class="field-group">
+          <h3>📊 Project Stats</h3>
+          <div style="font-size:12px;color:var(--muted);line-height:1.8">
+            Nodes: <strong id="nodeCount">0</strong><br>
+            Connections: <strong id="connectionCount">0</strong>
+          </div>
+        </div>
       </div>
-      <div class="file-drop-area">
-        <span>Click to Upload Scenario</span>
-        <small>.zip or .lxr packages</small>
-        <input type="file" id="file-input" accept=".zip,.lxr">
-      </div>
-      <div id="session-info"></div>
-      <button id="start-button" disabled>Enter Immersive VR</button>
+    </div>
+    
+    <div class="panel-footer">
+      <button class="btn success" style="width:100%" onclick="App.export()">
+        📦 Export WebXR Player Package (.zip)
+      </button>
     </div>
   </div>
+  
+  <div class="canvas-wrap">
+    <div id="canvas" class="canvas"></div>
 
-  <button class="exit-xr" id="exit-xr" aria-label="Exit VR">×</button>
-  <div id="status"></div>
+    <!-- FIX #3: zoom / fit controls -->
+    <div class="view-controls">
+      <button onclick="App.zoomBy(1/1.2)" title="Zoom out">−</button>
+      <span class="zoom-label" id="zoomLabel">100%</span>
+      <button onclick="App.zoomBy(1.2)" title="Zoom in">＋</button>
+      <button onclick="App.fitView()" title="Fit all nodes in view">⊞ Fit</button>
+      <button onclick="App.resetView()" title="Reset pan &amp; zoom">1:1</button>
+    </div>
+    
+    <div class="add-menu">
+      <div id="addOptions" class="add-options">
+        <div class="add-opt" onclick="App.addNode('video')">🎥 Video Node</div>
+        <div class="add-opt" onclick="App.addNode('end')">🏁 End Node</div>
+      </div>
+      <button class="add-btn" onclick="App.toggleAddMenu()">+</button>
+    </div>
+  </div>
+</div>
 
-  <script type="module">
-    import * as THREE from 'three';
+<!-- Preview Modal -->
+<div class="preview-modal" id="previewModal">
+  <div class="preview-content">
+    <div class="preview-header">
+      <h2 id="previewTitle">Preview</h2>
+      <div style="display:flex; gap:8px;">
+        <!-- FIX #4: headset safe-zone guide toggle -->
+        <button class="btn secondary" id="safeZoneToggle" onclick="App.toggleSafeZone()">🥽 Headset Guide: On</button>
+        <button class="btn secondary" onclick="App.closePreview()">Close</button>
+      </div>
+    </div>
+    <div class="preview-body" id="previewBody">
+      <!-- Dynamic preview content -->
+    </div>
+    <div class="preview-nav" id="previewNav">
+      <!-- Navigation buttons -->
+    </div>
+  </div>
+</div>
 
-    // Core 3D
-    let camera, scene, renderer, xrSession = null;
-    let videoElement, videoTexture, videoMaterial, videoMesh, fallbackEnvironment;
-    let raycaster, reticle, clock;
-    let xrSupported = false;
+<div class="status" id="status"></div>
 
-    // Logic state
-    let gazeTimer = 0;
-    let lastIntersectedChoice = null;
-    const GAZE_TIME_THRESHOLD = 2.0;
-    let sessionData = null;
-    let assetCache = {};
-    let currentNode = null;
-    let nodeTimer = 0;            // wall-clock since node load; survives video end
-    let activeChoices = [];
-    let overlaysGroup = new THREE.Group();
+<!-- Loading Indicator -->
+<div class="loader" id="globalLoader" style="display:none">
+  <div class="loader-spinner"></div>
+  <div class="loader-text" id="loaderText">Processing...</div>
+</div>
 
-    // Reused temps (no per-frame allocation)
-    const _gazeOrigin = new THREE.Vector3();
-    const _gazeDir = new THREE.Vector3();
-    const _gazeQuat = new THREE.Quaternion();
+<script>
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
 
-    // Analytics
-    let sessionLog = [];
-    let sessionStartTime = 0;
+// --- PERSISTENT MEDIA STORE -------------------------------------------------
+// localStorage can't hold video bytes, so clips used to die on reload.
+// IndexedDB persists Blobs across restarts → media survives & exports work.
+var DB = {
+  _p: null,
+  open: function(){ return this._p || (this._p = new Promise(function(res, rej){
+    var r = indexedDB.open('lxr_media', 1);
+    r.onupgradeneeded = function(){ r.result.createObjectStore('blobs'); };
+    r.onsuccess = function(){ res(r.result); };
+    r.onerror   = function(){ rej(r.error); };
+  })); },
+  put: function(k, b){ return this.open().then(function(db){ return new Promise(function(res, rej){
+    var tx = db.transaction('blobs','readwrite'); tx.objectStore('blobs').put(b, k);
+    tx.oncomplete = function(){ res(); }; tx.onerror = function(){ rej(tx.error); };
+  }); }); },
+  get: function(k){ return this.open().then(function(db){ return new Promise(function(res, rej){
+    var rq = db.transaction('blobs','readonly').objectStore('blobs').get(k);
+    rq.onsuccess = function(){ res(rq.result || null); }; rq.onerror = function(){ rej(rq.error); };
+  }); }); }
+};
 
-    const startButton = document.getElementById('start-button');
-    const fileInput = document.getElementById('file-input');
-    const sessionInfo = document.getElementById('session-info');
-    const statusElement = document.getElementById('status');
-    const exitButton = document.getElementById('exit-xr');
+const App = {
+  project: {
+    title: "My 360° Scenario",
+    startNode: null,
+    nodes: [],
+    connections: [],
+    assets: { videos: [], images: [] }
+  },
+  
+  history: [],
+  historyIndex: -1,
+  isUndoing: false,
 
-    function init() {
-      scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x111111);
+  // FIX #3: camera state. screen = world * scale + (x, y)
+  view: { x: 0, y: 0, scale: 1 },
 
-      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
-      scene.add(camera);
+  // FIX #4: headset safe-zone guide visibility in preview
+  safeZoneVisible: true,
 
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-      renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.xr.enabled = true;
-      document.body.appendChild(renderer.domElement);
+  selectedNode: null,
+  dragging: null,
+  dragOffset: {x:0, y:0},
+  _assetsNeedRelink: false,
+  previewState: {
+    currentNode: null,
+    history: [],
+    videoTime: 0,
+    overlayTimer: null,
+    videoFailed: false
+  },
+  
+  init: function() {
+    var self = this;
 
-      clock = new THREE.Clock();
-      raycaster = new THREE.Raycaster();
-
-      const envGeo = new THREE.SphereGeometry(20, 32, 32);
-      const envMat = new THREE.MeshBasicMaterial({ color: 0x1f2937, wireframe: true, transparent: true, opacity: 0.1 });
-      fallbackEnvironment = new THREE.Mesh(envGeo, envMat);
-      scene.add(fallbackEnvironment);
-
-      videoElement = document.getElementById('video');
-      videoTexture = new THREE.VideoTexture(videoElement);
-      videoTexture.minFilter = THREE.LinearFilter;
-      videoTexture.magFilter = THREE.LinearFilter;
-      videoTexture.format = THREE.RGBAFormat;
-      videoTexture.colorSpace = THREE.SRGBColorSpace; // fix: 360 footage no longer washed out
-
-      const sphereGeometry360 = new THREE.SphereGeometry(15, 64, 32, 0, Math.PI * 2, 0, Math.PI);
-      sphereGeometry360.scale(-1, 1, 1);
-      videoMaterial = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.FrontSide });
-      videoMesh = new THREE.Mesh(sphereGeometry360, videoMaterial);
-      videoMesh.visible = false;
-      scene.add(videoMesh);
-
-      scene.add(overlaysGroup);
-      setupGazeInteraction();
-
-      // WebXR capability gate
-      if (navigator.xr && navigator.xr.isSessionSupported) {
-        navigator.xr.isSessionSupported('immersive-vr').then(s => {
-          xrSupported = s;
-          if (!s) updateStatus('Immersive VR not supported on this device/browser', true);
-        }).catch(() => { xrSupported = false; });
-      } else {
-        xrSupported = false;
-        updateStatus('WebXR not available in this browser', true);
+    // FIX #3: pan (drag empty canvas) + wheel zoom. This also takes over the
+    // old click-to-deselect: a "click" is just a pan that moved < 4px.
+    this.initPanZoom();
+    
+    document.getElementById('projectTitle').addEventListener('input', function(e) {
+      self.project.title = e.target.value;
+    });
+    
+    document.addEventListener('keydown', function(e) {
+      if(e.key === 'Delete' && self.selectedNode && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+        self.deleteNode();
       }
-
-      window.addEventListener('resize', onWindowResize);
-      startButton.addEventListener('click', startXR);
-      exitButton.addEventListener('click', () => { if (xrSession) xrSession.end(); });
-      fileInput.addEventListener('change', handleFileSelect);
-    }
-
-    function setupGazeInteraction() {
-      const reticleGeo = new THREE.RingGeometry(0.015, 0.02, 32);
-      const reticleMat = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.7, transparent: true, side: THREE.DoubleSide });
-      reticle = new THREE.Mesh(reticleGeo, reticleMat);
-
-      const gazeProgressGeo = new THREE.CircleGeometry(0.015, 32);
-      const gazeProgressMat = new THREE.MeshBasicMaterial({ color: 0x0969da, opacity: 0.9, transparent: true, side: THREE.DoubleSide });
-      const gazeProgress = new THREE.Mesh(gazeProgressGeo, gazeProgressMat);
-      gazeProgress.name = 'gazeProgress';
-      gazeProgress.scale.set(0, 0, 0);
-
-      reticle.add(gazeProgress);
-      reticle.position.z = -1;
-      camera.add(reticle);
-    }
-
-    function onWindowResize() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-
-    // === Data & File Loading ===
-    async function handleFileSelect(event) {
-      const file = event.target.files[0];
-      if (!file) return;
-
-      sessionInfo.textContent = 'Loading scenario packages...';
-      sessionInfo.classList.add('show');
-      startButton.disabled = true;
-      sessionData = null;
-
-      Object.keys(assetCache).forEach(url => URL.revokeObjectURL(assetCache[url]));
-      assetCache = {};
-
-      try {
-        const zip = await JSZip.loadAsync(file);
-        const projectFile = zip.file('project.json');
-
-        if (projectFile) {
-          const projectData = await projectFile.async('string');
-          sessionData = JSON.parse(projectData);
-
-          const assetPromises = [];
-          if (sessionData.assets && sessionData.assets.videos) {
-            sessionData.assets.videos.forEach(v => {
-              const f = zip.file(v.file);
-              if (f) assetPromises.push(f.async('blob').then(b => assetCache[v.id] = URL.createObjectURL(b)));
-            });
-          }
-          if (sessionData.assets && sessionData.assets.images) {
-            sessionData.assets.images.forEach(img => {
-              const f = zip.file(img.file);
-              if (f) assetPromises.push(f.async('blob').then(b => assetCache[img.id] = URL.createObjectURL(b)));
-            });
-          }
-          await Promise.all(assetPromises);
-        } else {
-          // Legacy fallback
-          const htmlFile = zip.file('index.html');
-          if (!htmlFile) throw new Error('project.json not found in zip.');
-          const htmlContent = await htmlFile.async('string');
-          const match = htmlContent.match(/const\s+flow\s*=\s*(\{[\s\S]*?\});/);
-          if (!match) throw new Error('Legacy format unreadable.');
-          sessionData = (new Function(`return ${match[1]}`))();
-          const assetPromises = [];
-          zip.folder('assets').forEach((rel, zipEntry) => {
-            assetPromises.push(zipEntry.async('blob').then(b => assetCache[zipEntry.name.split('/').pop()] = URL.createObjectURL(b)));
-          });
-          await Promise.all(assetPromises);
-        }
-
-        if (!sessionData || !sessionData.nodes || !sessionData.startNode) {
-          throw new Error('Invalid project structure.');
-        }
-
-        sessionInfo.textContent = `Ready: ${sessionData.title}`;
-        startButton.disabled = !xrSupported;
-        updateStatus(xrSupported ? 'Scenario loaded successfully!' : 'Loaded — but immersive VR is unavailable here', !xrSupported);
-      } catch (err) {
-        console.error('Failed to load:', err);
-        sessionInfo.textContent = 'Error parsing file.';
-        updateStatus(`Error: ${err.message}`, true);
-      }
-    }
-
-    // === Immersive XR Lifecycle ===
-    function startXR() {
-      if (!sessionData) return;
-      if (!xrSupported || !navigator.xr) { updateStatus('WebXR immersive-vr unavailable on this device', true); return; }
-      navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] })
-        .then(onSessionStarted)
-        .catch(err => updateStatus(`Failed to start VR: ${err.message}`, true));
-    }
-
-    function onSessionStarted(session) {
-      xrSession = session;
-      document.body.classList.add('xr-active');
-      renderer.xr.setReferenceSpaceType('local');
-      renderer.xr.setSession(session);
-      renderer.setAnimationLoop(render);
-      session.addEventListener('end', onSessionEnd);
-
-      sessionStartTime = performance.now();
-      sessionLog = [{ action: 'session_start', title: sessionData.title, timestamp: sessionStartTime }];
-
-      currentNode = sessionData.nodes.find(n => n.id === sessionData.startNode);
-      if (currentNode) {
-        loadNode(currentNode);
-      } else {
-        updateStatus('Error: Start node not found.', true);
-        session.end();
-      }
-    }
-
-    function onSessionEnd() {
-      document.body.classList.remove('xr-active');
-      renderer.setAnimationLoop(null);
-      xrSession = null;
-      videoElement.pause();
-      videoElement.removeAttribute('src');
-      videoElement.load();
-      clearOverlays();
-
-      if (sessionLog.length > 1) {
-        sessionLog.push({ action: 'session_end', duration_sec: (performance.now() - sessionStartTime) / 1000 });
+    });
+    
+    // Check if we have an autosave draft (LAYOUT ONLY — media never persists to localStorage)
+    var draft = localStorage.getItem('lxr_autosave');
+    if (draft) {
         try {
-          const blob = new Blob([JSON.stringify(sessionLog, null, 2)], { type: 'application/json' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `${sessionData.title.replace(/[^a-z0-9]/gi, '_')}_eval.json`;
-          document.body.appendChild(a); a.click(); document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(url), 4000);
-        } catch (err) {}
-      }
-      sessionLog = []; sessionStartTime = 0; currentNode = null;
+            var parsed = JSON.parse(draft);
+            if (parsed.nodes && parsed.nodes.length > 0) {
+                this.project = parsed;
+                if (!this.project.assets) this.project.assets = { videos: [], images: [] };
+                if (!this.project.assets.videos) this.project.assets.videos = [];
+                if (!this.project.assets.images) this.project.assets.images = [];
+                // Defensive: neutralise any binary leftovers, including the legacy
+                // "fileObj:{}" garbage older builds wrote (that empty object is what
+                // made JSZip throw "Can't read the data of videos/...mp4" on export).
+                this.project.assets.videos.forEach(function(v){ v.fileObj = null; v.url = null; v.thumb = null; });
+                this.project.assets.images.forEach(function(i){ i.fileObj = null; i.url = null; });
+                this._assetsNeedRelink = (this.project.assets.videos.length + this.project.assets.images.length) > 0;
+                document.getElementById('projectTitle').value = this.project.title;
+            }
+        } catch(e) {}
     }
 
-    // === Video playback with a real fallback (no silent swallow) ===
-    function playVideo(src) {
-      videoElement.src = src;
-      videoElement.loop = false;
-      videoMesh.visible = true;
-      const p = videoElement.play();
-      if (p && p.catch) p.catch(() => showPlayGate());
+    if (!this.project.nodes || this.project.nodes.length === 0) {
+        // Start with a video node if new
+        this.addNode('video', 100, 150, true);
     }
 
-    function showPlayGate() {
-      if (overlaysGroup.getObjectByName('playGate')) return;
-      updateStatus('Gaze the ▶ Play button to start the video', true);
-      const btn = createTextPlane('▶ Play', { width: 512, height: 200, fontSize: 72, backgroundColor: 'rgba(9,105,218,0.95)', textColor: 'white', fontWeight: '700', scale: 1.2 });
-      positionMeshFromXY(btn, 50, 50, 6.0);
-      btn.name = 'playGate';
-      btn.userData = { isChoice: true, choiceData: { __retryPlay: true, label: 'play_gate' } };
-      overlaysGroup.add(btn);
-      activeChoices.push(btn);
+    this.renderCanvas();
+    this.updateStats();
+    this.updateAssetLists();
+    this.saveState();
+
+    // FIX #3: restored multi-node drafts open framed; fresh projects stay 1:1.
+    if (this.project.nodes.length > 1) this.fitView(); else this.applyView();
+
+    // Ask the browser not to evict our media; then pull clips back from IndexedDB.
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+    this.restoreMedia();
+  },
+
+  restoreMedia: async function(){
+    var self = this;
+    var vids = this.project.assets.videos, imgs = this.project.assets.images;
+    var all = vids.length + imgs.length;
+    if (!all) return;
+    var restored = 0;
+
+    // Phase 1 — rehydrate Blob + URL (fast: makes media usable & exportable).
+    async function rehydrate(a){
+      try { var b = await DB.get(a.id); if (b){ a.fileObj = b; a.url = URL.createObjectURL(b); restored++; } } catch(e){}
     }
+    for (var i=0;i<imgs.length;i++) await rehydrate(imgs[i]);
+    for (var v=0;v<vids.length;v++) await rehydrate(vids[v]);
 
-    function clearPlayGate() {
-      const gate = overlaysGroup.getObjectByName('playGate');
-      if (gate) { overlaysGroup.remove(gate); disposeNode(gate); activeChoices = activeChoices.filter(c => c !== gate); }
+    this._assetsNeedRelink = restored < all;
+    this.updateAssetLists();
+    this.renderCanvas();
+    this.showStatus(restored ? ('Restored ' + restored + '/' + all + ' media files from this browser')
+                             : 'Open your saved .zip (Load) to restore media');
+
+    // Phase 2 — regen video thumbnails ONE AT A TIME (never trip the decode cap).
+    for (var k=0;k<vids.length;k++){
+      var vid = vids[k];
+      if (vid.url && !vid.thumb){
+        var t = await this.generateThumb(vid.url), id = vid.id;
+        if (t){ vid.thumb = t; this.updateAssetLists();
+          this.project.nodes.forEach(function(n){ if(n.video===id) self.createNodeElement(n); }); }
+      }
     }
+  },
 
-    // === Node Logic ===
-    async function loadNode(node) {
-      sessionLog.push({ action: 'node_start', node_id: node.id, title: node.title, timestamp: performance.now() });
-      clearOverlays();
-      nodeTimer = 0;
-      window.isTransitioning = false;
-
-      videoElement.pause();
-      videoMesh.visible = false;
-      if (node.video) {
-        let videoSrc = assetCache[node.video];
-        if (!videoSrc && sessionData.assets && sessionData.assets.videos) {
-          const videoAsset = sessionData.assets.videos.find(v => v.id === node.video);
-          if (videoAsset) videoSrc = assetCache[videoAsset.id] || assetCache[videoAsset.name];
-        }
-        if (videoSrc) playVideo(videoSrc);
+  // ---- UNDO & AUTOSAVE SYSTEM ----
+  saveState: function() {
+      if (this.isUndoing) return;
+      
+      // Cut off future history if we modified something after an Undo
+      if (this.historyIndex < this.history.length - 1) {
+          this.history = this.history.slice(0, this.historyIndex + 1);
       }
 
-      if (node.imageOverlays) {
-        for (const io of node.imageOverlays) {
-          if (!io.imageId || !assetCache[io.imageId]) continue;
-          const mesh = await createImagePlane(assetCache[io.imageId], { scale: io.scale || 1 });
-          if (mesh) {
-            positionMeshFromXY(mesh, io.x, io.y, 7.5);
-            mesh.userData = { startTime: io.time || 0, endTime: (io.time || 0) + (io.duration || 5), isOverlay: true };
-            mesh.visible = false;
-            overlaysGroup.add(mesh);
-          }
-        }
+      var self = this;
+
+      // ---- In-memory UNDO clone ----
+      // Strip File blobs for the structural clone, then re-attach the REAL File
+      // references so undo can still play/export media within this session.
+      var clone = JSON.parse(JSON.stringify(this.project, function(key, value) {
+          if (key === 'fileObj') return undefined;
+          return value;
+      }));
+      clone.assets.videos.forEach(function(v) {
+          var orig = self.project.assets.videos.find(function(o){ return o.id === v.id; });
+          if (orig) v.fileObj = orig.fileObj;
+      });
+      clone.assets.images.forEach(function(img) {
+          var orig = self.project.assets.images.find(function(o){ return o.id === img.id; });
+          if (orig) img.fileObj = orig.fileObj;
+      });
+
+      this.history.push(clone);
+      this.historyIndex++;
+
+      // Cap the undo stack — each snapshot still carries every thumbnail data URL,
+      // so an unbounded stack leaks memory on long sessions with many clips.
+      var MAX_HISTORY = 50;
+      if (this.history.length > MAX_HISTORY) {
+          this.history.splice(0, this.history.length - MAX_HISTORY);
       }
+      this.historyIndex = this.history.length - 1;
 
-      if (node.textOverlays) {
-        for (const to of node.textOverlays) {
-          const textMesh = createTextPlane(to.text || '', { backgroundColor: to.color || 'rgba(255, 255, 255, 0.95)', textColor: to.textColor || 'black', scale: to.scale || 1 });
-          positionMeshFromXY(textMesh, to.x, to.y, 7);
-          textMesh.userData = { startTime: to.time || 0, endTime: (to.time || 0) + (to.duration || 3), isOverlay: true };
-          textMesh.visible = false;
-          overlaysGroup.add(textMesh);
-        }
-      }
-
-      if (node.question || (node.choices && node.choices.length > 0)) {
-        const qGroup = new THREE.Group();
-        let yOffset = 0;
-        const scale = node.questionScale || 1;
-
-        if (node.question) {
-          const qMesh = createTextPlane(node.question, { width: 1024, height: 256, fontSize: 50, backgroundColor: 'rgba(17, 24, 39, 0.9)', textColor: 'white', fontWeight: '700', scale: scale });
-          qMesh.position.set(0, yOffset, 0);
-          qGroup.add(qMesh);
-          yOffset -= (0.8 * scale);
-        }
-        if (node.choices && node.choices.length > 0) {
-          node.choices.forEach((choice) => {
-            const cMesh = createTextPlane(choice.label, { width: 800, height: 160, fontSize: 44, backgroundColor: 'rgba(9, 105, 218, 0.95)', textColor: 'white', scale: scale * 0.8 });
-            cMesh.position.set(0, yOffset, 0);
-            cMesh.userData = { isChoice: true, choiceData: choice };
-            qGroup.add(cMesh);
-            activeChoices.push(cMesh);
-            yOffset -= (0.5 * scale);
+      // ---- localStorage autosave: STRUCTURE ONLY ----
+      // CRITICAL FIX: never serialize File / blob URLs / base64 here.
+      //   * A File JSON.stringifies to {} . On reload that became a *truthy*
+      //     fileObj:{}, which is exactly what crashed the ZIP export.
+      //   * Big base64 thumbnails blow the ~5MB quota on large projects, which
+      //     silently broke autosave (and surfaced as "preview breaks at scale").
+      // Persisting layout only keeps the autosave tiny, safe and quota-proof.
+      try {
+          var light = JSON.stringify(this.project, function(key, value) {
+              if (key === 'fileObj' || key === 'url' || key === 'data' || key === 'thumb') return undefined;
+              return value;
           });
-        }
+          localStorage.setItem('lxr_autosave', light);
+      } catch (e) {
+          /* best-effort: quota exceeded / private mode -> skip autosave */
+      }
+  },
 
-        positionMeshFromXY(qGroup, node.questionX || 50, node.questionY || 50, 6.5);
-        qGroup.userData = { startTime: node.questionTime || 0, endTime: Infinity, isOverlay: true };
-        qGroup.visible = false;
-        overlaysGroup.add(qGroup);
+  undo: function() {
+      if (this.historyIndex > 0) {
+          this.isUndoing = true;
+          this.historyIndex--;
+          var restoredState = this.history[this.historyIndex];
+          
+          this.project = JSON.parse(JSON.stringify(restoredState));
+          document.getElementById('projectTitle').value = this.project.title;
+          
+          // Re-attach blobs
+          this.project.assets.videos.forEach(function(v) {
+              var orig = restoredState.assets.videos.find(function(o){ return o.id === v.id; });
+              if (orig) v.fileObj = orig.fileObj;
+          });
+          this.project.assets.images.forEach(function(img) {
+              var orig = restoredState.assets.images.find(function(o){ return o.id === img.id; });
+              if (orig) img.fileObj = orig.fileObj;
+          });
+
+          this.renderCanvas();
+          this.updateStats();
+          this.updateAssetLists();
+
+          if(this.selectedNode) {
+              var stillExists = this.project.nodes.find(n => n.id === this.selectedNode.id);
+              if(stillExists) {
+                  this.selectedNode = stillExists;
+                  this.showInspector(stillExists);
+              } else {
+                  this.deselect();
+              }
+          }
+          this.isUndoing = false;
+          this.showStatus('Undo successful');
+      } else {
+          this.showStatus('Nothing to undo');
+      }
+  },
+  
+  // ---- NODE MANAGEMENT ----
+  addNode: function(type, x, y, skipSave) {
+    // FIX #3: spawn in the middle of the CURRENT viewport (pan/zoom aware),
+    // so a new node never materialises off-screen.
+    if (x === undefined || y === undefined) {
+      var wrap = document.querySelector('.canvas-wrap');
+      var cx = (wrap.clientWidth / 2 - this.view.x) / this.view.scale;
+      var cy = (wrap.clientHeight / 2 - this.view.y) / this.view.scale;
+      x = Math.max(0, cx - 80 + (Math.random() * 120 - 60));
+      y = Math.max(0, cy - 60 + (Math.random() * 80 - 40));
+    }
+    
+    var node = {
+      id: 'node_' + Date.now() + Math.random().toString(36).substr(2,4),
+      type: type,
+      x: x,
+      y: y,
+      title: type === 'video' ? 'Video Scene' : 'End Scene',
+      video: null,
+      imageOverlays: [],
+      textOverlays: [],
+      question: '',
+      questionTime: 0,
+      questionX: 50,
+      questionY: 50,
+      questionScale: 1.0,
+      choices: [],
+      duration: 10,
+      defaultNext: null,
+      outcome: type === 'end' ? 'complete' : null
+    };
+    
+    this.project.nodes.push(node);
+    if(!this.project.startNode) this.project.startNode = node.id;
+    
+    this.createNodeElement(node);
+    this.updateConnections();
+    this.updateStats();
+
+    if(!skipSave) this.saveState();
+    return node;
+  },
+  
+  renderCanvas: function() {
+      document.getElementById('canvas').innerHTML = '';
+      var self = this;
+      this.project.nodes.forEach(n => self.createNodeElement(n));
+      this.updateConnections();
+  },
+
+  createNodeElement: function(node) {
+    var old = document.getElementById(node.id);
+    if(old) old.remove();
+
+    var el = document.createElement('div');
+    el.className = 'node';
+    if(this.project.startNode === node.id) el.className += ' start';
+    if(this.selectedNode && this.selectedNode.id === node.id) el.className += ' selected';
+    
+    el.id = node.id;
+    el.style.left = node.x + 'px';
+    el.style.top = node.y + 'px';
+    
+    var thumb = '';
+    if(node.video) {
+      var asset = this.project.assets.videos.find(function(v) { return v.id === node.video; });
+      if(asset && asset.thumb) {
+        thumb = '<div class="node-thumb" style="background-image:url(\'' + asset.thumb + '\')"></div>';
       }
     }
+    
+    var icons = [];
+    if(node.video) icons.push('🎬');
+    if(node.imageOverlays && node.imageOverlays.length) icons.push('🖼');
+    if(node.textOverlays && node.textOverlays.length) icons.push('📝');
+    if(node.question || (node.choices && node.choices.length)) icons.push('❓');
+    
+    var iconsHtml = icons.length ? '<div class="node-icons">' + icons.join(' ') + '</div>' : '';
+    var badge = this.project.startNode === node.id ? '<div class="node-badge">START</div>' : '';
+    
+    el.innerHTML = thumb +
+      '<div class="node-content">' +
+        '<div class="node-title">' + esc(node.title) + '</div>' +
+        '<div class="node-type">' + node.type.toUpperCase() + '</div>' +
+        iconsHtml +
+      '</div>' +
+      badge;
+    
+    var self = this;
+    el.addEventListener('mousedown', function(e) { self.startDrag(e, node); });
+    el.addEventListener('click', function(e) {
+      e.stopPropagation();
+      self.selectNode(node);
+    });
+    
+    document.getElementById('canvas').appendChild(el);
+  },
+  
+  selectNode: function(node) {
+    var nodes = document.querySelectorAll('.node');
+    for(var i = 0; i < nodes.length; i++) {
+      nodes[i].classList.remove('selected');
+    }
+    document.getElementById(node.id).classList.add('selected');
+    this.selectedNode = node;
+    this.showInspector(node);
+  },
+  
+  deselect: function() {
+    var nodes = document.querySelectorAll('.node');
+    for(var i = 0; i < nodes.length; i++) {
+      nodes[i].classList.remove('selected');
+    }
+    this.selectedNode = null;
+    document.getElementById('inspector').classList.remove('active');
+    document.getElementById('defaultView').style.display = 'block';
+  },
+  
+  // ---- INSPECTOR & EDITING ----
+  showInspector: function(node) {
+    // FIX #5: hand-edited / foreign project files can carry a question without
+    // a choices array — self-heal here so .length / .forEach never throw.
+    if (!Array.isArray(node.choices)) node.choices = [];
 
-    // Map the builder's FLAT 16:9 frame to a forward-facing arc.
-    // ±45° horizontal / ±25° vertical ≈ 16:9, so authoring is WYSIWYG and
-    // everything stays inside the gaze-reachable forward field of view.
-    function positionMeshFromXY(mesh, pctX, pctY, radius) {
-      pctX = pctX !== undefined ? pctX : 50;
-      pctY = pctY !== undefined ? pctY : 50;
-      const yaw   = (pctX - 50) / 100 * (Math.PI / 180 * 90); // ±45°
-      const pitch = (50 - pctY) / 100 * (Math.PI / 180 * 50); // ±25°
-      mesh.position.set(
-        radius * Math.sin(yaw) * Math.cos(pitch),
-        radius * Math.sin(pitch),
-        -radius * Math.cos(yaw) * Math.cos(pitch)
-      );
-      mesh.lookAt(0, 0, 0);
+    var inspector = document.getElementById('inspector');
+    document.getElementById('defaultView').style.display = 'none';
+    
+    var html = '<div class="field-group">';
+    html += '<h3>📝 ' + node.type.charAt(0).toUpperCase() + node.type.slice(1) + ' Properties</h3>';
+    html += '<label>Title</label>';
+    html += '<input value="' + esc(node.title) + '" onchange="App.updateNode(\'title\', this.value)">';
+    
+    if(node.type !== 'end') {
+      html += '<label style="margin-top:8px;">Duration (seconds)</label>';
+      html += '<input type="number" value="' + node.duration + '" onchange="App.updateNode(\'duration\', this.value)">';
+    }
+    html += '</div>';
+    
+    if(node.type !== 'end') {
+      // Background Video
+      html += '<div class="field-group">';
+      if(this.project.assets.videos.length === 0) {
+          html += '<h3 style="cursor:pointer; color:var(--accent); text-decoration:underline;" onclick="App.deselect()" title="Go to Assets Library">🎬 360° Video (Upload in Assets)</h3>';
+      } else {
+          html += '<h3>🎬 360° Video</h3>';
+      }
+      html += '<select onchange="App.updateNode(\'video\', this.value)">';
+      html += '<option value="">No video</option>';
+      for(var i = 0; i < this.project.assets.videos.length; i++) {
+        var v = this.project.assets.videos[i];
+        html += '<option value="' + v.id + '"' + (node.video === v.id ? ' selected' : '') + '>' + esc(v.name) + '</option>';
+      }
+      html += '</select>';
+      html += '</div>';
+      
+      // Image Overlays
+      html += '<div class="field-group">';
+      if(this.project.assets.images.length === 0) {
+          html += '<h3 style="cursor:pointer; color:var(--accent); text-decoration:underline;" onclick="App.deselect()" title="Go to Assets Library">🖼 Image Overlays (Upload in Assets)</h3>';
+      } else {
+          html += '<h3>🖼 Image Overlays</h3>';
+      }
+      html += '<div class="overlay-list">';
+      if(node.imageOverlays) {
+        for(var imgIdx = 0; imgIdx < node.imageOverlays.length; imgIdx++) {
+          var io = node.imageOverlays[imgIdx];
+          html += '<div class="overlay-item">';
+          html += '<div class="overlay-controls">';
+          html += '<select onchange="App.updateOverlay(\'image\', ' + imgIdx + ', \'imageId\', this.value)" style="flex:1;">';
+          html += '<option value="">Select Image...</option>';
+          this.project.assets.images.forEach(a => {
+            html += '<option value="' + a.id + '"' + (io.imageId === a.id ? ' selected' : '') + '>' + esc(a.name) + '</option>';
+          });
+          html += '</select>';
+          html += '<button class="overlay-remove" onclick="App.removeOverlay(\'image\', ' + imgIdx + ')">×</button>';
+          html += '</div>';
+
+          html += '<div class="overlay-controls" style="margin-top:4px;">';
+          html += '<label style="margin:0">Start (sec): <input type="number" step="0.5" value="'+(io.time !== undefined ? io.time : 0)+'" onchange="App.updateOverlay(\'image\','+imgIdx+',\'time\',this.value)"></label>';
+          html += '<label style="margin:0">Dur (sec): <input type="number" step="0.5" value="'+(io.duration !== undefined ? io.duration : 5)+'" onchange="App.updateOverlay(\'image\','+imgIdx+',\'duration\',this.value)"></label>';
+          html += '</div>';
+
+          html += '<div class="slider-row">';
+          html += '<label><div style="display:flex;justify-content:space-between"><span>Pos X</span><span>'+(io.x !== undefined ? io.x : 50)+'</span></div><input type="range" min="0" max="100" value="'+(io.x !== undefined ? io.x : 50)+'" oninput="this.previousElementSibling.children[1].textContent=this.value" onchange="App.updateOverlay(\'image\','+imgIdx+',\'x\',this.value)"></label>';
+          html += '<label><div style="display:flex;justify-content:space-between"><span>Pos Y</span><span>'+(io.y !== undefined ? io.y : 50)+'</span></div><input type="range" min="0" max="100" value="'+(io.y !== undefined ? io.y : 50)+'" oninput="this.previousElementSibling.children[1].textContent=this.value" onchange="App.updateOverlay(\'image\','+imgIdx+',\'y\',this.value)"></label>';
+          html += '<label><div style="display:flex;justify-content:space-between"><span>Size</span><span>'+(io.scale !== undefined ? io.scale : 1)+'</span></div><input type="range" min="0.1" max="3" step="0.1" value="'+(io.scale !== undefined ? io.scale : 1)+'" oninput="this.previousElementSibling.children[1].textContent=this.value" onchange="App.updateOverlay(\'image\','+imgIdx+',\'scale\',this.value)"></label>';
+          html += '</div>';
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+      html += '<button class="btn secondary mini" style="width:100%; margin-top:8px;" onclick="App.addOverlay(\'image\')">+ Add Image Overlay</button>';
+      html += '</div>';
+
+      // Text Overlays
+      html += '<div class="field-group">';
+      html += '<h3>📱 Text Overlays</h3>';
+      html += '<div class="overlay-list">';
+      if(node.textOverlays) {
+        for(var t = 0; t < node.textOverlays.length; t++) {
+          var overlay = node.textOverlays[t];
+          html += '<div class="overlay-item">';
+          html += '<textarea rows="2" placeholder="Text content..." onchange="App.updateOverlay(\'text\', ' + t + ', \'text\', this.value)">' + esc(overlay.text || '') + '</textarea>';
+          
+          html += '<div class="overlay-controls" style="margin-top:4px; flex-wrap:wrap;">';
+          html += '<label style="margin:0">Start (sec): <input type="number" step="0.5" value="'+(overlay.time !== undefined ? overlay.time : 0)+'" onchange="App.updateOverlay(\'text\', '+t+', \'time\', this.value)"></label>';
+          html += '<label style="margin:0">Dur (sec): <input type="number" step="0.5" value="'+(overlay.duration !== undefined ? overlay.duration : 3)+'" onchange="App.updateOverlay(\'text\', '+t+', \'duration\', this.value)"></label>';
+          html += '<label style="margin:0; display:flex; align-items:center; gap:4px;" title="Background Color">BG: <input type="color" list="colorPresets" value="'+(overlay.color||'#ffffff')+'" onchange="App.updateOverlay(\'text\', '+t+', \'color\', this.value)"><span style="font-family:monospace;font-size:10px;background:#eee;padding:2px 4px;border-radius:4px;border:1px solid #ddd;">'+(overlay.color||'#ffffff')+'</span></label>';
+          html += '<label style="margin:0; display:flex; align-items:center; gap:4px;" title="Text Color">Txt: <input type="color" list="colorPresets" value="'+(overlay.textColor||'#000000')+'" onchange="App.updateOverlay(\'text\', '+t+', \'textColor\', this.value)"><span style="font-family:monospace;font-size:10px;background:#eee;padding:2px 4px;border-radius:4px;border:1px solid #ddd;">'+(overlay.textColor||'#000000')+'</span></label>';
+          html += '<button class="overlay-remove" onclick="App.removeOverlay(\'text\', ' + t + ')">×</button>';
+          html += '</div>';
+
+          html += '<div class="slider-row">';
+          html += '<label><div style="display:flex;justify-content:space-between"><span>Pos X</span><span>'+(overlay.x !== undefined ? overlay.x : 50)+'</span></div><input type="range" min="0" max="100" value="'+(overlay.x !== undefined ? overlay.x : 50)+'" oninput="this.previousElementSibling.children[1].textContent=this.value" onchange="App.updateOverlay(\'text\','+t+',\'x\',this.value)"></label>';
+          html += '<label><div style="display:flex;justify-content:space-between"><span>Pos Y</span><span>'+(overlay.y !== undefined ? overlay.y : 50)+'</span></div><input type="range" min="0" max="100" value="'+(overlay.y !== undefined ? overlay.y : 50)+'" oninput="this.previousElementSibling.children[1].textContent=this.value" onchange="App.updateOverlay(\'text\','+t+',\'y\',this.value)"></label>';
+          html += '<label><div style="display:flex;justify-content:space-between"><span>Size</span><span>'+(overlay.scale !== undefined ? overlay.scale : 1)+'</span></div><input type="range" min="0.5" max="3" step="0.1" value="'+(overlay.scale !== undefined ? overlay.scale : 1)+'" oninput="this.previousElementSibling.children[1].textContent=this.value" onchange="App.updateOverlay(\'text\','+t+',\'scale\',this.value)"></label>';
+          html += '</div>';
+
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+      html += '<button class="btn secondary mini" style="width:100%; margin-top:8px;" onclick="App.addOverlay(\'text\')">+ Add Text Overlay</button>';
+      html += '</div>';
+      
+      // Question Section
+      html += '<div class="field-group">';
+      html += '<h3>❓ Question & Navigation</h3>';
+      html += '<label>Question (optional)</label>';
+      html += '<textarea rows="2" placeholder="Ask a question..." onchange="App.updateNode(\'question\', this.value)">' + esc(node.question || '') + '</textarea>';
+      
+      if(node.question) {
+        html += '<div class="overlay-controls" style="margin-top:8px;">';
+        html += '<label style="margin:0">Show Time (sec): <input type="number" step="0.5" value="'+(node.questionTime !== undefined ? node.questionTime : 0)+'" onchange="App.updateNode(\'questionTime\', this.value)"></label>';
+        html += '</div>';
+
+        html += '<div class="slider-row">';
+        html += '<label><div style="display:flex;justify-content:space-between"><span>Pos X</span><span>'+(node.questionX !== undefined ? node.questionX : 50)+'</span></div><input type="range" min="0" max="100" value="'+(node.questionX !== undefined ? node.questionX : 50)+'" oninput="this.previousElementSibling.children[1].textContent=this.value" onchange="App.updateNode(\'questionX\', this.value)"></label>';
+        html += '<label><div style="display:flex;justify-content:space-between"><span>Pos Y</span><span>'+(node.questionY !== undefined ? node.questionY : 50)+'</span></div><input type="range" min="0" max="100" value="'+(node.questionY !== undefined ? node.questionY : 50)+'" oninput="this.previousElementSibling.children[1].textContent=this.value" onchange="App.updateNode(\'questionY\', this.value)"></label>';
+        html += '<label><div style="display:flex;justify-content:space-between"><span>Size</span><span>'+(node.questionScale !== undefined ? node.questionScale : 1)+'</span></div><input type="range" min="0.5" max="3" step="0.1" value="'+(node.questionScale !== undefined ? node.questionScale : 1)+'" oninput="this.previousElementSibling.children[1].textContent=this.value" onchange="App.updateNode(\'questionScale\', this.value)"></label>';
+        html += '</div>';
+
+        html += '<label style="margin-top:12px">Answer Choices</label>';
+        html += '<div class="overlay-list">';
+        
+        for(var k = 0; k < node.choices.length; k++) {
+          var c = node.choices[k];
+          html += '<div class="overlay-item" style="flex-direction:row; align-items:center;">';
+          html += '<input type="checkbox" title="Correct answer"' + (c.correct ? ' checked' : '') + ' onchange="App.updateChoice(' + k + ', \'correct\', this.checked)" style="width:auto;">';
+          html += '<input type="text" value="' + esc(c.label) + '" placeholder="Answer..." onchange="App.updateChoice(' + k + ', \'label\', this.value)" style="flex:1;">';
+          html += '<select title="Navigate to" onchange="App.updateChoice(' + k + ', \'target\', this.value)" style="width:110px;">';
+          html += '<option value="">→ Default</option>';
+          for(var m = 0; m < this.project.nodes.length; m++) {
+            var n = this.project.nodes[m];
+            if(n.id !== node.id) {
+              html += '<option value="' + n.id + '"' + (c.target === n.id ? ' selected' : '') + '>' + esc(n.title) + '</option>';
+            }
+          }
+          html += '</select>';
+          html += '<button class="overlay-remove" style="margin-left:0;" onclick="App.removeChoice(' + k + ')">×</button>';
+          html += '</div>';
+        }
+        
+        html += '</div>';
+        html += '<button class="btn secondary mini" style="width:100%; margin-top:8px;" onclick="App.addChoice()">+ Add Choice</button>';
+      }
+      
+      html += '<label style="margin-top:12px">Default Next Node (if no question / no selection)</label>';
+      html += '<select onchange="App.updateNode(\'defaultNext\', this.value)">';
+      html += '<option value="">None (End Scenario)</option>';
+      for(var q = 0; q < this.project.nodes.length; q++) {
+        var nav = this.project.nodes[q];
+        if(nav.id !== node.id) {
+          html += '<option value="' + nav.id + '"' + (node.defaultNext === nav.id ? ' selected' : '') + '>' + esc(nav.title) + '</option>';
+        }
+      }
+      html += '</select>';
+      html += '</div>';
+    }
+    
+    html += '<div class="field-group">';
+    html += '<h3>⚡ Actions</h3>';
+    html += '<div class="quick-actions">';
+    html += '<button class="action-btn" onclick="App.duplicateNode()">📋 Duplicate</button>';
+    html += '<button class="action-btn" onclick="App.deleteNode()" style="color:var(--red)">🗑 Delete</button>';
+    if(this.project.startNode !== node.id) {
+      html += '<button class="action-btn" onclick="App.setStart()">🚀 Set Start</button>';
+    }
+    html += '</div>';
+    html += '</div>';
+    
+    inspector.innerHTML = html;
+    inspector.classList.add('active');
+  },
+  
+  updateNode: function(prop, value) {
+    if(!this.selectedNode) return;
+    
+    if(['duration', 'questionTime', 'questionX', 'questionY', 'questionScale'].includes(prop)) {
+        value = parseFloat(value) || 0;
     }
 
-    // === Selection Logic ===
-    function selectChoice(choice) {
-      // Retry-play gate is handled before the transition lock.
-      if (choice && choice.__retryPlay) {
-        clearPlayGate();
-        window.isTransitioning = false;
-        updateGazeProgress(0);
-        const p = videoElement.play();
-        if (p && p.catch) p.catch(() => showPlayGate());
+    this.selectedNode[prop] = value;
+    
+    if(prop === 'question') {
+      if(value && (!this.selectedNode.choices || this.selectedNode.choices.length===0)) {
+        this.selectedNode.choices = [
+          { id: 'c' + Date.now() + '1', label: 'Option A', correct: true, target: null },
+          { id: 'c' + Date.now() + '2', label: 'Option B', correct: false, target: null }
+        ];
+      }
+      this.showInspector(this.selectedNode);
+    }
+    
+    this.createNodeElement(this.selectedNode);
+    this.updateConnections();
+    this.saveState();
+  },
+
+  addOverlay: function(type) {
+    if(!this.selectedNode) return;
+    if(type === 'image') {
+        if(!this.selectedNode.imageOverlays) this.selectedNode.imageOverlays = [];
+        this.selectedNode.imageOverlays.push({ imageId: '', time: 0, duration: 5, x: 50, y: 50, scale: 1.0 });
+    } else {
+        if(!this.selectedNode.textOverlays) this.selectedNode.textOverlays = [];
+        this.selectedNode.textOverlays.push({ time: 0, duration: 3, text: '', color: '#ffffff', textColor: '#000000', x: 50, y: 50, scale: 1.0 });
+    }
+    this.showInspector(this.selectedNode);
+    this.createNodeElement(this.selectedNode);
+    this.saveState();
+  },
+
+  updateOverlay: function(type, idx, prop, value) {
+    if(!this.selectedNode) return;
+    var list = type === 'image' ? this.selectedNode.imageOverlays : this.selectedNode.textOverlays;
+    if(!list || !list[idx]) return;
+
+    if(['time', 'duration', 'x', 'y', 'scale'].includes(prop)) {
+        value = parseFloat(value) || 0;
+    }
+    list[idx][prop] = value;
+    
+    if(prop === 'color' || prop === 'textColor' || prop === 'imageId') {
+        this.showInspector(this.selectedNode); // Refresh colors/selects
+    }
+    this.createNodeElement(this.selectedNode);
+    this.saveState();
+  },
+
+  removeOverlay: function(type, idx) {
+    if(!this.selectedNode) return;
+    var list = type === 'image' ? this.selectedNode.imageOverlays : this.selectedNode.textOverlays;
+    if(list) list.splice(idx, 1);
+    this.showInspector(this.selectedNode);
+    this.createNodeElement(this.selectedNode);
+    this.saveState();
+  },
+
+  updateChoice: function(idx, prop, value) {
+    if(!this.selectedNode || !this.selectedNode.choices[idx]) return;
+    this.selectedNode.choices[idx][prop] = value;
+    this.updateConnections();
+    this.saveState();
+  },
+  
+  addChoice: function() {
+    if(!this.selectedNode) return;
+    if(!this.selectedNode.choices) this.selectedNode.choices = [];
+    this.selectedNode.choices.push({ id: 'c' + Date.now(), label: 'New Option', correct: false, target: null });
+    this.showInspector(this.selectedNode);
+    this.saveState();
+  },
+  
+  removeChoice: function(idx) {
+    if(!this.selectedNode || !this.selectedNode.choices) return;
+    this.selectedNode.choices.splice(idx, 1);
+    this.showInspector(this.selectedNode);
+    this.saveState();
+  },
+  
+  deleteNode: function() {
+    if(!this.selectedNode) return;
+    var id = this.selectedNode.id;
+    
+    this.project.nodes = this.project.nodes.filter(function(n) { return n.id !== id; });
+    this.project.nodes.forEach(function(n) {
+      if(n.defaultNext === id) n.defaultNext = null;
+      if(n.choices) {
+        n.choices.forEach(function(c) {
+          if(c.target === id) c.target = null;
+        });
+      }
+    });
+    
+    var el = document.getElementById(id);
+    if(el) el.remove();
+    
+    if(this.project.startNode === id) {
+      this.project.startNode = this.project.nodes[0] ? this.project.nodes[0].id : null;
+    }
+    
+    this.deselect();
+    this.updateConnections();
+    this.updateStats();
+    this.saveState();
+  },
+  
+  setStart: function() {
+    if(!this.selectedNode) return;
+    this.project.startNode = this.selectedNode.id;
+    var nodes = document.querySelectorAll('.node');
+    for(var i = 0; i < nodes.length; i++) {
+      nodes[i].classList.remove('start');
+    }
+    document.getElementById(this.selectedNode.id).classList.add('start');
+    this.showInspector(this.selectedNode);
+    this.saveState();
+  },
+  
+  duplicateNode: function() {
+    if(!this.selectedNode) return;
+    var copy = JSON.parse(JSON.stringify(this.selectedNode));
+    copy.id = 'node_' + Date.now() + Math.random().toString(36).substr(2,4);
+    copy.x += 60;
+    copy.y += 60;
+    copy.title += ' (Copy)';
+    if(copy.choices) {
+      copy.choices.forEach(function(c) {
+        c.id = 'c' + Date.now() + Math.random().toString(36).substr(2,4);
+      });
+    }
+    this.project.nodes.push(copy);
+    this.createNodeElement(copy);
+    this.updateConnections();
+    this.updateStats();
+    this.saveState();
+  },
+  
+  // ---- CANVAS, DRAG & VIEW (FIX #3) ----
+  // Transform model: screen = world * view.scale + view.(x,y), origin 0 0.
+  // getBoundingClientRect() of #canvas already includes the pan translation,
+  // so cursor → world is just (client - rect) / scale.
+  startDrag: function(e, node) {
+    e.preventDefault();
+    this.dragging = node;
+    var rect = e.target.closest('.node').getBoundingClientRect();
+    // Screen px → world px: unscale the grab offset or the node jumps under
+    // the cursor at any zoom level other than 100%.
+    this.dragOffset = {
+      x: (e.clientX - rect.left) / this.view.scale,
+      y: (e.clientY - rect.top) / this.view.scale
+    };
+    
+    var self = this;
+    var moveHandler = function(e) { self.onDrag(e); };
+    var upHandler = function() {
+      self.dragging = null;
+      document.removeEventListener('mousemove', moveHandler);
+      document.removeEventListener('mouseup', upHandler);
+      self.saveState();
+    };
+    
+    document.addEventListener('mousemove', moveHandler);
+    document.addEventListener('mouseup', upHandler);
+  },
+  
+  onDrag: function(e) {
+    if(!this.dragging) return;
+    var canvas = document.getElementById('canvas').getBoundingClientRect();
+    var s = this.view.scale;
+    // Clamp ≥ 0 so a node can never be flung into unrecoverable negative space.
+    this.dragging.x = Math.max(0, (e.clientX - canvas.left) / s - this.dragOffset.x);
+    this.dragging.y = Math.max(0, (e.clientY - canvas.top) / s - this.dragOffset.y);
+    
+    var el = document.getElementById(this.dragging.id);
+    if(el) {
+        el.style.left = this.dragging.x + 'px';
+        el.style.top = this.dragging.y + 'px';
+    }
+    
+    this.updateConnections();
+  },
+
+  initPanZoom: function() {
+    var self = this;
+    var wrap = document.querySelector('.canvas-wrap');
+
+    // Pan: left/middle-drag on empty canvas. A "pan" under 4px of travel is a
+    // click → deselect (replaces the old canvas click listener, which would
+    // otherwise deselect after every pan gesture).
+    wrap.addEventListener('mousedown', function(e) {
+      if (e.button !== 0 && e.button !== 1) return;
+      if (e.target.closest('.node') || e.target.closest('.add-menu') || e.target.closest('.view-controls')) return;
+      e.preventDefault();
+      var startX = e.clientX, startY = e.clientY;
+      var origX = self.view.x, origY = self.view.y;
+      var moved = false;
+      wrap.classList.add('panning');
+      var move = function(ev) {
+        var dx = ev.clientX - startX, dy = ev.clientY - startY;
+        if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+        self.view.x = origX + dx;
+        self.view.y = origY + dy;
+        self.applyView();
+      };
+      var up = function() {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        wrap.classList.remove('panning');
+        if (!moved) self.deselect();
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+
+    // Wheel zoom, anchored on the cursor.
+    wrap.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      var rect = wrap.getBoundingClientRect();
+      self.zoomAt(e.deltaY < 0 ? 1.1 : 1/1.1, e.clientX - rect.left, e.clientY - rect.top);
+    }, { passive: false });
+  },
+
+  applyView: function() {
+    document.getElementById('canvas').style.transform =
+      'translate(' + this.view.x + 'px,' + this.view.y + 'px) scale(' + this.view.scale + ')';
+    var z = document.getElementById('zoomLabel');
+    if (z) z.textContent = Math.round(this.view.scale * 100) + '%';
+  },
+
+  zoomAt: function(factor, px, py) {
+    // Keep the world point under (px, py) stationary while scaling.
+    var old = this.view.scale;
+    var next = Math.min(2.5, Math.max(0.2, old * factor));
+    this.view.x = px - (px - this.view.x) * (next / old);
+    this.view.y = py - (py - this.view.y) * (next / old);
+    this.view.scale = next;
+    this.applyView();
+  },
+
+  zoomBy: function(factor) {
+    var wrap = document.querySelector('.canvas-wrap');
+    this.zoomAt(factor, wrap.clientWidth / 2, wrap.clientHeight / 2);
+  },
+
+  fitView: function() {
+    var wrap = document.querySelector('.canvas-wrap');
+    var ns = this.project.nodes;
+    if (!ns.length) { this.resetView(); return; }
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    ns.forEach(function(n) {
+      minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + 160); maxY = Math.max(maxY, n.y + 120);
+    });
+    var pad = 60;
+    var s = Math.min(
+      (wrap.clientWidth - pad * 2) / Math.max(1, maxX - minX),
+      (wrap.clientHeight - pad * 2) / Math.max(1, maxY - minY),
+      1.25
+    );
+    s = Math.max(0.2, Math.min(2.5, s));
+    this.view.scale = s;
+    this.view.x = (wrap.clientWidth - (maxX - minX) * s) / 2 - minX * s;
+    this.view.y = (wrap.clientHeight - (maxY - minY) * s) / 2 - minY * s;
+    this.applyView();
+  },
+
+  resetView: function() {
+    this.view = { x: 0, y: 0, scale: 1 };
+    this.applyView();
+  },
+  
+  updateConnections: function() {
+    var oldConns = document.querySelectorAll('.connection');
+    for(var i = 0; i < oldConns.length; i++) {
+      oldConns[i].remove();
+    }
+    
+    var self = this;
+    var connectionCount = 0;
+    
+    this.project.nodes.forEach(function(node) {
+      if(node.defaultNext) {
+        self.drawConnection(node.id, node.defaultNext, 'default');
+        connectionCount++;
+      }
+      if(node.choices) {
+        node.choices.forEach(function(choice) {
+          if(choice.target) {
+            self.drawConnection(node.id, choice.target, choice.correct ? 'correct' : 'incorrect');
+            connectionCount++;
+          }
+        });
+      }
+    });
+    
+    document.getElementById('connectionCount').textContent = connectionCount;
+  },
+  
+  drawConnection: function(fromId, toId, type) {
+    // FIX #3: endpoints come from MODEL coordinates, not getBoundingClientRect.
+    // The SVG lives inside #canvas, so the pan/zoom transform applies to it for
+    // free and the old screen-space rect math (which double-transformed under
+    // zoom and depended on layout flushes mid-drag) is gone. Node cards are a
+    // fixed 160×120 → centres are x+80 / y+60.
+    var from = this.project.nodes.find(function(n) { return n.id === fromId; });
+    var to = this.project.nodes.find(function(n) { return n.id === toId; });
+    if(!from || !to) return;
+    
+    var x1 = from.x + 80, y1 = from.y + 60;
+    var x2 = to.x + 80,   y2 = to.y + 60;
+    
+    var container = document.createElement('div');
+    container.className = 'connection ' + type;
+    
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    
+    var dx = x2 - x1;
+    var c1x = x1 + dx * 0.3;
+    var c1y = y1;
+    var c2x = x2 - dx * 0.3;
+    var c2y = y2;
+    
+    var d = 'M ' + x1 + ' ' + y1 + ' C ' + c1x + ' ' + c1y + ', ' + c2x + ' ' + c2y + ', ' + x2 + ' ' + y2;
+    path.setAttribute('d', d);
+    
+    svg.appendChild(path);
+    container.appendChild(svg);
+    document.getElementById('canvas').appendChild(container);
+  },
+  
+  // ---- ASSETS ----
+  addVideos: function(e) {
+    var self = this;
+    var files = Array.from(e.target.files);
+    if(files.length === 0) return;
+
+    files.forEach(function(file) {
+      var url = URL.createObjectURL(file);
+      // If a dead reference with this exact filename exists, rehydrate it in
+      // place — every scene already pointing at it relights, no re-picking.
+      var asset = self.project.assets.videos.find(function(v){ return v.name === file.name && !v.fileObj; });
+      if (asset){ asset.fileObj = file; asset.url = url; asset.thumb = null; }
+      else { asset = { id:'v'+Date.now()+Math.random().toString(36).substr(2,4), name:file.name, fileObj:file, url:url, thumb:null };
+        self.project.assets.videos.push(asset); }
+      DB.put(asset.id, file).catch(function(){}); // survive next reload
+
+      self.generateThumb(url).then(function(thumb) {
+        if (!thumb) return;
+        var a = self.project.assets.videos.find(function(v) { return v.id === asset.id; });
+        if (!a) return;
+        a.thumb = thumb; self.updateAssetLists();
+        self.project.nodes.forEach(function(n) { if (n.video === a.id) self.createNodeElement(n); });
+      });
+    });
+
+    this._assetsNeedRelink = this.project.assets.videos.some(function(v){return !v.fileObj;})
+                          || this.project.assets.images.some(function(i){return !i.fileObj;});
+    this.updateAssetLists();
+    this.renderCanvas();
+    this.saveState();
+    this.showStatus('Added ' + files.length + ' video(s)');
+    e.target.value = '';
+  },
+  
+  addImages: function(e) {
+    var files = Array.from(e.target.files);
+    var self = this;
+    if(files.length === 0) return;
+
+    files.forEach(function(file) {
+      var url = URL.createObjectURL(file);
+      var asset = self.project.assets.images.find(function(i){ return i.name === file.name && !i.fileObj; });
+      if (asset){ asset.fileObj = file; asset.url = url; }
+      else { asset = { id:'i'+Date.now()+Math.random().toString(36).substr(2,4), name:file.name, fileObj:file, url:url };
+        self.project.assets.images.push(asset); }
+      DB.put(asset.id, file).catch(function(){});
+    });
+
+    this._assetsNeedRelink = this.project.assets.videos.some(function(v){return !v.fileObj;})
+                          || this.project.assets.images.some(function(i){return !i.fileObj;});
+    this.updateAssetLists();
+    this.renderCanvas();
+    this.saveState();
+    this.showStatus('Added ' + files.length + ' image(s)');
+    e.target.value = '';
+  },
+  
+  generateThumb: function(videoUrl) {
+    // FIX #1 + #2: this promise now ALWAYS settles, and it grabs a real frame.
+    //  #1 — 3s killswitch: HEVC (and other undecodable codecs) can stall in
+    //       Chrome without firing loadeddata OR error; the killswitch resolves
+    //       null so callers never hang. Never gate asset existence on this.
+    //  #2 — the old code set currentTime=1 before metadata existed and drew on
+    //       loadeddata (frame 0 → black thumbs). Now: loadedmetadata → seek to
+    //       min(1s, duration/2) → draw inside 'seeked', when the target frame
+    //       is actually decoded.
+    return new Promise(function(resolve) {
+      var video = document.createElement('video');
+      var done = false;
+      var finish = function(result) {
+        if (done) return;
+        done = true;
+        clearTimeout(killswitch);
+        // Release the decoder slot (same rationale as the preview cleanup).
+        try { video.removeAttribute('src'); video.load(); } catch(e) {}
+        resolve(result);
+      };
+      var killswitch = setTimeout(function() { finish(null); }, 3000);
+      
+      video.muted = true;
+      video.preload = 'auto';
+      video.src = videoUrl;
+      
+      video.addEventListener('loadedmetadata', function() {
+        try {
+          video.currentTime = Math.min(1, (video.duration || 2) / 2);
+        } catch(e) { finish(null); }
+      });
+      video.addEventListener('seeked', function() {
+        try {
+          var canvas = document.createElement('canvas');
+          canvas.width = 320;
+          canvas.height = 180;
+          canvas.getContext('2d').drawImage(video, 0, 0, 320, 180);
+          finish(canvas.toDataURL('image/jpeg', 0.5));
+        } catch(e) { finish(null); }
+      });
+      video.addEventListener('error', function() { finish(null); });
+    });
+  },
+  
+  updateAssetLists: function() {
+    document.getElementById('videoCount').textContent = this.project.assets.videos.length;
+    document.getElementById('imageCount').textContent = this.project.assets.images.length;
+
+    var relink = this._assetsNeedRelink ? ' <span style="color:var(--red)">(re-load .zip)</span>' : '';
+
+    var vList = document.getElementById('videoList');
+    if(this.project.assets.videos.length > 0) {
+        vList.innerHTML = this.project.assets.videos.map(v => `<div class="asset-item-row" title="${esc(v.name)}">🎬 ${esc(v.name)}${(!v.fileObj && this._assetsNeedRelink)?relink:''}</div>`).join('');
+    } else {
+        vList.innerHTML = '<i>No videos uploaded yet</i>';
+    }
+
+    var iList = document.getElementById('imageList');
+    if(this.project.assets.images.length > 0) {
+        iList.innerHTML = this.project.assets.images.map(i => `<div class="asset-item-row" title="${esc(i.name)}">🖼 ${esc(i.name)}${(!i.fileObj && this._assetsNeedRelink)?relink:''}</div>`).join('');
+    } else {
+        iList.innerHTML = '<i>No images uploaded yet</i>';
+    }
+  },
+  
+  updateStats: function() {
+    document.getElementById('nodeCount').textContent = this.project.nodes.length;
+  },
+  
+  toggleAddMenu: function() {
+    document.getElementById('addOptions').classList.toggle('show');
+  },
+  
+  showStatus: function(msg) {
+    var status = document.getElementById('status');
+    status.textContent = msg;
+    status.classList.add('show');
+    setTimeout(function() { status.classList.remove('show'); }, 3500);
+  },
+  
+  showLoader: function(show, text) {
+    var loader = document.getElementById('globalLoader');
+    loader.style.display = show ? 'block' : 'none';
+    if(text) document.getElementById('loaderText').textContent = text;
+  },
+  
+  // ---- PREVIEW SYSTEM ----
+  preview: function() {
+    var startNode = this.project.nodes.find(n => n.id === this.project.startNode);
+    if(!startNode) {
+      this.showStatus('Please set a start node first');
+      return;
+    }
+    
+    this.previewState = {
+      currentNode: startNode,
+      history: [],
+      videoTime: 0,
+      overlayTimer: null,
+      videoFailed: false
+    };
+    
+    document.getElementById('previewModal').classList.add('show');
+    document.getElementById('previewTitle').textContent = 'Preview: ' + this.project.title;
+    this.renderPreviewNode(startNode);
+  },
+
+  // FIX #4: toggle the headset safe-zone guide
+  toggleSafeZone: function() {
+    this.safeZoneVisible = !this.safeZoneVisible;
+    var guide = document.getElementById('previewSafeZone');
+    if (guide) guide.style.display = this.safeZoneVisible ? 'block' : 'none';
+    var btn = document.getElementById('safeZoneToggle');
+    if (btn) btn.textContent = '🥽 Headset Guide: ' + (this.safeZoneVisible ? 'On' : 'Off');
+  },
+  
+  renderPreviewNode: function(node) {
+    // FIX #5: same self-heal as the inspector — foreign files may have a
+    // question with no choices array; updateOverlays below does node.choices.forEach.
+    if (!Array.isArray(node.choices)) node.choices = [];
+
+    var body = document.getElementById('previewBody');
+    var nav = document.getElementById('previewNav');
+    var self = this;
+    
+    this.cleanupPreviewTimers();
+    this.previewState.currentNode = node;
+    
+    var html = '<div style="position:relative; display:inline-block; max-width:100%; max-height:100%;">';
+    
+    var hasVideo = false;
+    var videoMissing = false;
+    if(node.video) {
+      var videoAsset = this.project.assets.videos.find(v => v.id === node.video);
+      if(videoAsset && videoAsset.url) {
+        hasVideo = true;
+        // muted + playsinline are REQUIRED for Chrome to honour autoplay; without
+        // them the clip never plays, so the time-gated question never appeared.
+        // No <source type>: setting src directly lets the browser sniff the blob,
+        // so WebM/MOV play correctly instead of being forced to video/mp4.
+        html += `<video class="preview-video" style="width:100%; max-width:800px; max-height:60vh; background:#000; border-radius:8px; display:block;" autoplay muted playsinline id="previewVideo" src="${esc(videoAsset.url)}"></video>`;
+      } else if (videoAsset) {
+        videoMissing = true;
+      }
+    }
+    
+    if(!hasVideo) {
+       var msg = videoMissing
+         ? 'Video not loaded — open your saved .zip (Load) to restore it.<br><span style="font-size:12px;opacity:.7">You can still click through the scenario below.</span>'
+         : 'No Video Attached';
+       html += `<div style="width:800px; height:450px; max-width:100%; max-height:60vh; background:#222; border-radius:8px; display:flex; align-items:center; justify-content:center; color:#999; text-align:center; padding:20px;">${msg}</div>`;
+    }
+
+    // FIX #4: HEADSET SAFE-ZONE GUIDE — matches the player's flat→arc mapping.
+    // The player projects this whole frame onto a forward arc: x 0→100 = yaw
+    // −45°→+45°, y 0→100 = pitch +25°→−25° (≈16:9). So the frame EDGE is the
+    // edge of the mapped arc — i.e. the periphery of the Quest's view when
+    // looking straight ahead. The green dashed box (~±25° yaw / ±15° pitch:
+    // 25/45 and 15/25 of the half-extents → 22%/20% insets) marks what is
+    // comfortably readable WITHOUT head-turning. Author questions/text inside
+    // the green box. Sits below the overlays layer so content stays on top.
+    html += `<div id="previewSafeZone" style="position:absolute; inset:0; pointer-events:none; border-radius:8px; overflow:hidden; display:${this.safeZoneVisible ? 'block' : 'none'};">
+      <div style="position:absolute; inset:0; box-shadow:inset 0 0 90px rgba(0,0,0,0.5);"></div>
+      <div style="position:absolute; inset:0; border:1px solid rgba(255,255,255,0.45); border-radius:8px;"></div>
+      <div style="position:absolute; left:22%; top:20%; right:22%; bottom:20%; border:2px dashed rgba(34,197,94,0.95); border-radius:10px;"></div>
+      <div style="position:absolute; left:50%; top:50%; width:16px; height:16px; transform:translate(-50%,-50%); border:2px solid rgba(255,255,255,0.85); border-radius:50%;"></div>
+      <div style="position:absolute; top:6px; left:50%; transform:translateX(-50%); font:600 10px/1.4 sans-serif; color:#fff; background:rgba(0,0,0,0.55); padding:2px 10px; border-radius:10px; white-space:nowrap;">frame edge = headset arc ±45° yaw / ±25° pitch</div>
+      <div style="position:absolute; top:calc(20% + 6px); left:50%; transform:translateX(-50%); font:600 10px/1.4 sans-serif; color:#4ade80; background:rgba(0,0,0,0.55); padding:2px 10px; border-radius:10px; white-space:nowrap;">comfort zone — readable without turning</div>
+    </div>`;
+
+    // Two layers: overlays (rebuilt as clips/text appear) and a SEPARATE
+    // question layer rendered ONCE so its buttons never churn under the cursor.
+    html += '<div id="previewOverlaysLayer" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; overflow:hidden; border-radius:8px;"></div>';
+    html += '<div id="previewQuestionLayer" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; overflow:hidden; border-radius:8px;"></div>';
+    html += '</div>';
+
+    body.innerHTML = html;
+
+    var layer = document.getElementById('previewOverlaysLayer');
+    var qLayer = document.getElementById('previewQuestionLayer');
+    var videoEl = document.getElementById('previewVideo');
+
+    // The question used to be re-emitted into innerHTML every 100ms — destroying
+    // the choice buttons mid-hover (the "shaking") and splitting a click's
+    // mousedown/mouseup across two element instances (so it never fired).
+    var questionShown = false;
+    var showQuestion = function(){
+        if (questionShown || !node.question) return;
+        questionShown = true;
+        var qHtml = `<div style="position:absolute; left:${node.questionX||50}%; top:${node.questionY||50}%; transform:translate(-50%, -50%) scale(${node.questionScale||1}); background:var(--surface); padding:20px; border-radius:12px; pointer-events:auto; text-align:center; box-shadow:0 10px 30px rgba(0,0,0,0.5); min-width:250px;">`;
+        qHtml += `<div style="font-size:16px; font-weight:600; margin-bottom:12px; color:var(--text);">${esc(node.question)}</div>`;
+        qHtml += `<div style="display:flex; flex-direction:column; gap:8px;">`;
+        node.choices.forEach((c, idx) => { qHtml += `<div class="preview-choice" data-choice-idx="${idx}">${esc(c.label)}</div>`; });
+        qHtml += `</div></div>`;
+        qLayer.innerHTML = qHtml;
+    };
+
+    qLayer.onclick = function(e) {
+        var choiceEl = e.target.closest('.preview-choice');
+        if (choiceEl) self.handlePreviewChoice(node, parseInt(choiceEl.getAttribute('data-choice-idx')), choiceEl);
+    };
+
+    // Memoised: only touch the overlay DOM when the visible set actually changes,
+    // so static images/text stop flickering and the video never re-renders.
+    var lastLayerHtml = null;
+    var updateOverlays = function(currentTime) {
+        var layerHtml = '';
+
+        (node.imageOverlays || []).forEach(io => {
+            if (currentTime >= io.time && currentTime < (io.time + (io.duration || 5))) {
+                var imgA = self.project.assets.images.find(a => a.id === io.imageId);
+                if (imgA && imgA.url) layerHtml += `<img src="${imgA.url}" style="position:absolute; left:${io.x||50}%; top:${io.y||50}%; transform:translate(-50%, -50%) scale(${io.scale||1}); pointer-events:auto; max-width:50%; object-fit:contain; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.5);">`;
+            }
+        });
+
+        (node.textOverlays || []).forEach(to => {
+            if (currentTime >= to.time && currentTime < (to.time + (to.duration || 3)))
+                layerHtml += `<div style="position:absolute; left:${to.x||50}%; top:${to.y||50}%; transform:translate(-50%, -50%) scale(${to.scale||1}); background-color:${to.color||'#ffffff'}; color:${to.textColor||'#000000'}; padding:12px 20px; border-radius:8px; pointer-events:auto; text-align:center; box-shadow:0 10px 30px rgba(0,0,0,0.5); font-size:16px; font-weight:500; max-width:80%; word-wrap:break-word;">${esc(to.text)}</div>`;
+        });
+
+        if (layerHtml !== lastLayerHtml) { lastLayerHtml = layerHtml; layer.innerHTML = layerHtml; }
+        if (node.question && currentTime >= (node.questionTime || 0)) showQuestion();
+    };
+
+    // ---- ROBUST TIMING ----
+    // A single wall-clock ticker is the source of truth for overlay/question timing.
+    // If a real video is decoding we follow its currentTime; otherwise (video missing,
+    // codec/autoplay blocked, or decoder exhausted after navigating many clips) we fall
+    // back to wall-clock so the QUESTION STILL APPEARS and the scenario stays navigable.
+    // After the clip ENDS, currentTime freezes at duration, so we keep advancing on
+    // wall-clock from the end point — otherwise anything scheduled at/after runtime
+    // (e.g. a question placed "right after the clip") would never trigger.
+    this.previewState.videoFailed = false;
+    var endedAtWall = null;
+    if (videoEl) {
+        videoEl.addEventListener('error', function(){ self.previewState.videoFailed = true; });
+        videoEl.addEventListener('ended', function(){
+            endedAtWall = (performance.now() - start) / 1000;
+            try { videoEl.pause(); } catch(e){}
+        });
+        var p = videoEl.play();
+        if (p && p.catch) p.catch(function(){ /* fallback clock covers blocked autoplay */ });
+    }
+
+    var start = performance.now();
+    updateOverlays(0);
+    this.previewState.overlayTimer = setInterval(function(){
+        var wall = (performance.now() - start) / 1000;
+        var t;
+        if (endedAtWall != null && videoEl) {
+            t = (videoEl.duration || endedAtWall) + (wall - endedAtWall); // keep advancing past end
+        } else if (videoEl && !self.previewState.videoFailed && videoEl.currentTime > 0.05) {
+            t = videoEl.currentTime;
+        } else {
+            t = wall;
+        }
+        updateOverlays(t);
+        // For no-video scenes, stop ticking shortly after the scene duration.
+        if (!videoEl && wall > ((parseFloat(node.duration) || 10) + 1)) {
+            clearInterval(self.previewState.overlayTimer);
+            self.previewState.overlayTimer = null;
+        }
+    }, 100);
+    
+    // Nav rendering
+    var navHtml = '';
+    if(this.previewState.history.length > 0) {
+      navHtml += '<button class="btn secondary" onclick="App.previewBack()">← Back</button>';
+    }
+    if(node.type === 'end') {
+      navHtml += '<button class="btn" onclick="App.restartPreview()">Restart</button>';
+    } else if(!node.choices || node.choices.length === 0) {
+      if(node.defaultNext) {
+        navHtml += '<button class="btn" onclick="App.previewNext()">Continue →</button>';
+      }
+    }
+    nav.innerHTML = navHtml;
+  },
+  
+  handlePreviewChoice: function(node, idx, choiceEl) {
+    var choice = node.choices[idx];
+    choiceEl.classList.add(choice.correct ? 'correct' : 'incorrect');
+    
+    var self = this;
+    setTimeout(function() {
+      self.previewState.history.push(node.id);
+      var nextId = choice.target || node.defaultNext;
+      if(nextId) {
+        var nextNode = self.project.nodes.find(n => n.id === nextId);
+        if(nextNode) {
+          self.renderPreviewNode(nextNode);
+          return;
+        }
+      }
+      self.closePreview();
+    }, 800);
+  },
+  
+  previewNext: function() {
+    var cn = this.previewState.currentNode;
+    if(!cn || !cn.defaultNext) return;
+    this.previewState.history.push(cn.id);
+    var nextNode = this.project.nodes.find(n => n.id === cn.defaultNext);
+    if(nextNode) {
+      this.previewState.currentNode = nextNode;
+      this.renderPreviewNode(nextNode);
+    }
+  },
+  
+  previewBack: function() {
+    if(this.previewState.history.length === 0) return;
+    var prevId = this.previewState.history.pop();
+    var prevNode = this.project.nodes.find(n => n.id === prevId);
+    if(prevNode) {
+      this.previewState.currentNode = prevNode;
+      this.renderPreviewNode(prevNode);
+    }
+  },
+  
+  restartPreview: function() {
+    var startNode = this.project.nodes.find(n => n.id === this.project.startNode);
+    if(startNode) {
+      this.previewState.history = [];
+      this.renderPreviewNode(startNode);
+    }
+  },
+  
+  cleanupPreviewTimers: function() {
+    if(this.previewState.overlayTimer) {
+      clearInterval(this.previewState.overlayTimer);
+      this.previewState.overlayTimer = null;
+    }
+    var videoEl = document.getElementById('previewVideo');
+    if (videoEl) {
+        // Fully release the decoder — critical when stepping through many clips,
+        // otherwise the browser hits its simultaneous-decode cap and later videos
+        // silently refuse to play.
+        try { videoEl.pause(); videoEl.removeAttribute('src'); videoEl.load(); } catch(e){}
+    }
+    this.previewState.videoFailed = false;
+  },
+
+  closePreview: function() {
+    document.getElementById('previewModal').classList.remove('show');
+    this.cleanupPreviewTimers();
+  },
+  
+  // ---- REAL SAVES & EXPORTS ----
+  save: async function(isExport) {
+    isExport = !!isExport;
+    var ext = isExport ? '.zip' : '.lxr';
+    var defaultName = this.project.title.replace(/[^a-z0-9]/gi, '_') + ext;
+    var promptMsg = isExport ? 'Enter export filename:' : 'Enter filename for your project:';
+    var fileName = prompt(promptMsg, defaultName);
+    
+    if(!fileName) return;
+    if(!fileName.endsWith(ext)) fileName += ext;
+    
+    this.showLoader(true, 'Packaging… reading media safely');
+    
+    var zip = new JSZip();
+    
+    // project.json carries no binaries: strip File blobs AND base64 thumbs
+    // (thumbs are written as .thumb.jpg sidecars, so keeping them here would
+    // store every thumbnail twice and bloat the manifest).
+    var projectData = JSON.parse(JSON.stringify(this.project, function(k, v){
+      return (k === 'fileObj' || k === 'thumb') ? undefined : v;
+    }));
+    projectData.assets.videos.forEach(function(v){ delete v.data; delete v.url; v.file = 'videos/' + v.id + '_' + v.name.replace(/[\\/]/g,'_'); });
+    projectData.assets.images.forEach(function(i){ delete i.data; delete i.url; i.file = 'images/' + i.id + '_' + i.name.replace(/[\\/]/g,'_'); });
+    
+    var videosFolder = zip.folder('videos');
+    var imagesFolder = zip.folder('images');
+    var missing = [];
+
+    // Resolve a *verified-readable* Blob for an asset. Returns null if unreadable.
+    // The slice(0,1) probe is the key fix: it catches a stale/garbage File handle
+    // BEFORE generateAsync, so one dead clip reports its name and is skipped instead
+    // of throwing "Can't read the data of videos/...mp4" and killing the whole export.
+    async function resolveBlob(a){
+      var blob = null;
+      if (a.fileObj instanceof Blob) {
+        blob = a.fileObj;
+      } else if (typeof a.url === 'string' && /^(blob:|https?:)/.test(a.url)) {
+        try { blob = await (await fetch(a.url)).blob(); } catch(e){ blob = null; }
+      } else if (typeof a.data === 'string' && a.data.indexOf('base64,') > -1) {
+        try {
+          var bin = atob(a.data.split('base64,')[1]);
+          var u8 = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+          blob = new Blob([u8]);
+        } catch(e){ blob = null; }
+      }
+      if (!blob) return null;
+      try { await blob.slice(0, 1).arrayBuffer(); } catch(e){ return null; }
+      return blob;
+    }
+
+    try {
+      var vids = this.project.assets.videos;
+      for (var vi = 0; vi < vids.length; vi++) {
+        var v = vids[vi];
+        this.showLoader(true, 'Reading video ' + (vi + 1) + '/' + vids.length + ': ' + v.name);
+        var vblob = await resolveBlob(v);
+        var vpath = v.id + '_' + v.name.replace(/[\\/]/g,'_');
+        if (vblob) {
+          videosFolder.file(vpath, vblob);
+          if (v.thumb && v.thumb.indexOf('base64,') > -1) {
+            videosFolder.file(vpath + '.thumb.jpg', v.thumb.split('base64,')[1], { base64: true });
+          }
+        } else {
+          missing.push(v.name);
+        }
+      }
+
+      var imgs = this.project.assets.images;
+      for (var ii = 0; ii < imgs.length; ii++) {
+        var im = imgs[ii];
+        var iblob = await resolveBlob(im);
+        var ipath = im.id + '_' + im.name.replace(/[\\/]/g,'_');
+        if (iblob) imagesFolder.file(ipath, iblob);
+        else missing.push(im.name);
+      }
+
+      var totalAssets = vids.length + imgs.length;
+      if (totalAssets > 0 && missing.length === totalAssets) {
+        this.showLoader(false);
+        alert("None of the media could be read.\n\nThis almost always means the project was reopened after a page reload — browsers can't keep video files in memory across reloads.\n\nUse Load to reopen your saved .zip, then export again.");
         return;
       }
 
-      if (window.isTransitioning) return;
-      window.isTransitioning = true;
+      zip.file('project.json', JSON.stringify(projectData, null, 2));
 
-      sessionLog.push({ action: 'choice_made', node: currentNode.id, choice: choice.label, correct: choice.correct, target: choice.target, time: performance.now() });
-      updateGazeProgress(0);
+      // STORE (no deflate): mp4/webm/jpg/png are already compressed, so deflating 13
+      // large clips just burns CPU + RAM for ~0% gain — a big part of why export
+      // choked on large projects. streamFiles keeps peak memory down.
+      var blobOut = await zip.generateAsync({ type: 'blob', streamFiles: true, compression: 'STORE' });
 
-      let nextNodeId = choice.target || currentNode.defaultNext;
-      if (nextNodeId) {
-        const nextNode = sessionData.nodes.find(n => n.id === nextNodeId);
-        if (nextNode) {
-          if (nextNode.type === 'end') { loadNode(nextNode); setTimeout(endSession, 3000); }
-          else { currentNode = nextNode; loadNode(currentNode); }
-        } else { endSession(); }
-      } else { endSession(); }
-    }
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blobOut);
+      a.download = fileName;
+      a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);
 
-    function endSession() { if (xrSession) xrSession.end(); }
-
-    // === Render & Interaction Loop ===
-    function render() {
-      const dt = clock.getDelta();
-      let currentTime = 0;
-
-      if (currentNode) {
-        nodeTimer += dt; // always advance the node clock
-
-        const hasVideo = !!currentNode.video && videoElement.readyState > 0;
-        const videoPlaying = hasVideo && !videoElement.ended && !videoElement.paused;
-
-        if (videoPlaying) {
-          currentTime = videoElement.currentTime;
-          nodeTimer = currentTime; // keep wall clock aligned for a seamless post-end handoff
-        } else {
-          currentTime = nodeTimer;  // no/ended/blocked video → wall clock drives the timeline
-        }
-
-        // Toggle overlay visibility along the timeline
-        overlaysGroup.children.forEach(child => {
-          if (child.userData.isOverlay && child.userData.startTime !== undefined) {
-            child.visible = currentTime >= child.userData.startTime && currentTime <= child.userData.endTime;
-          }
-        });
-
-        // Auto-advance / terminate — gated on choices that are actually VISIBLE.
-        const visibleChoices = getVisibleChoices();
-        const choicesPending = activeChoices.length > 0; // includes timed questions + play gate
-        let ended;
-        if (hasVideo) ended = videoElement.ended;
-        else ended = currentTime >= (currentNode.duration || 10); // covers no-video AND unloadable video
-
-        if (!choicesPending && ended) {
-          if (currentNode.defaultNext) {
-            selectChoice({ label: 'auto-nav', target: currentNode.defaultNext }); // self-guards
-          } else if (!window.isTransitioning) {
-            window.isTransitioning = true; // terminal video node, no link → end instead of freezing
-            endSession();
-          }
-        }
-
-        // If a question is timed AFTER a video that has ended, the wall clock above
-        // still advances, so it appears on schedule and stays (endTime = Infinity).
-        void visibleChoices;
-      }
-
-      handleGazeInteractions(dt);
-      fallbackEnvironment.rotation.y += dt * 0.05;
-      renderer.render(scene, camera);
-    }
-
-    function getVisibleChoices() {
-      return activeChoices.filter(c => c.visible && (c.parent ? c.parent.visible : true));
-    }
-
-    function handleGazeInteractions(dt) {
-      const visibleChoices = getVisibleChoices();
-
-      // Robust gaze ray: straight out of the camera's world orientation (XR-safe,
-      // no NDC/projection assumptions).
-      camera.getWorldPosition(_gazeOrigin);
-      camera.getWorldQuaternion(_gazeQuat);
-      _gazeDir.set(0, 0, -1).applyQuaternion(_gazeQuat).normalize();
-      raycaster.set(_gazeOrigin, _gazeDir);
-
-      const intersects = raycaster.intersectObjects(visibleChoices, false);
-      let intersectedChoice = intersects.length > 0 ? intersects[0].object : null;
-
-      if (intersectedChoice) {
-        if (lastIntersectedChoice === intersectedChoice) {
-          gazeTimer = Math.min(GAZE_TIME_THRESHOLD, gazeTimer + dt);
-          if (gazeTimer >= GAZE_TIME_THRESHOLD) selectChoice(intersectedChoice.userData.choiceData);
-        } else {
-          gazeTimer = 0;
-          lastIntersectedChoice = intersectedChoice;
-        }
-        updateGazeProgress(gazeTimer / GAZE_TIME_THRESHOLD, intersectedChoice);
+      this.showLoader(false);
+      if (missing.length) {
+        this.showStatus('Saved — ' + missing.length + ' unreadable file(s) skipped');
+        alert("Saved, but these files couldn't be read and were left out:\n\n• " + missing.join("\n• ") + "\n\nRe-add them in Assets (or Load the original .zip), then export again.");
       } else {
-        gazeTimer = 0;
-        lastIntersectedChoice = null;
-        updateGazeProgress(0);
+        this.showStatus('Saved as ' + fileName);
       }
+    } catch(err) {
+      this.showLoader(false);
+      alert('Error creating zip: ' + err.message);
     }
+  },
+  
+  load: function() { document.getElementById('loader').click(); },
+  
+  loadFile: function(e) {
+    var file = e.target.files[0];
+    if(!file) return;
+    
+    var self = this;
+    this.showLoader(true, 'Extracting project files...');
+    
+    var reader = new FileReader();
+    reader.onload = function(evt) {
+      JSZip.loadAsync(evt.target.result).then(function(zip) {
+        zip.file('project.json').async('string').then(function(projectStr) {
+          var loadedProject = JSON.parse(projectStr);
+          var promises = [];
+          var missing = [];
+          
+          loadedProject.assets.videos.forEach(function(video) {
+            var f = zip.file(video.file);
+            if(f) {
+                var p = f.async('blob').then(function(blob) {
+                    // Derive MIME from the extension instead of hardcoding mp4,
+                    // so WebM/MOV clips decode correctly.
+                    var vext = (video.name.split('.').pop() || '').toLowerCase();
+                    var vmime = vext === 'webm' ? 'video/webm' : (vext === 'mov' ? 'video/quicktime' : 'video/mp4');
+                    video.fileObj = new File([blob], video.name, { type: vmime });
+                    video.url = URL.createObjectURL(video.fileObj);
+                    DB.put(video.id, video.fileObj).catch(function(){});
+                    var thumbFile = zip.file(video.file + '.thumb.jpg');
+                    if(thumbFile) {
+                        return thumbFile.async('base64').then(function(thumbData) {
+                            video.thumb = 'data:image/jpeg;base64,' + thumbData;
+                        });
+                    } else {
+                        return self.generateThumb(video.url).then(t => { video.thumb = t; });
+                    }
+                });
+                promises.push(p);
+            } else {
+                missing.push(video.name);
+            }
+          });
+          
+          loadedProject.assets.images.forEach(function(img) {
+            var f = zip.file(img.file);
+            if(f) {
+                var mimeType = img.name.endsWith('.png') ? 'image/png' : 'image/jpeg';
+                var p = f.async('blob').then(function(blob) {
+                    img.fileObj = new File([blob], img.name, {type: mimeType});
+                    img.url = URL.createObjectURL(img.fileObj);
+                    DB.put(img.id, img.fileObj).catch(function(){});
+                });
+                promises.push(p);
+            } else {
+                missing.push(img.name);
+            }
+          });
+          
+          Promise.all(promises).then(function() {
+            // BACKWARD COMPATIBILITY Upgrades
+            loadedProject.nodes.forEach(function(node) {
+              if(!node.textOverlays) node.textOverlays = [];
+              // FIX #5: hand-edited / foreign files can ship a question with no
+              // choices array — node.choices.length would throw in the inspector
+              // and node.choices.forEach in the preview. Our own exports always
+              // write choices: [], so this only fires on foreign data.
+              if(!Array.isArray(node.choices)) node.choices = [];
+              if(!node.imageOverlays) {
+                  if(node.images && node.images.length > 0 && typeof node.images[0] === 'string') {
+                      node.imageOverlays = node.images.map(imgId => ({ imageId: imgId, time: 0, duration: 5, x: 50, y: 50, scale: 1 }));
+                  } else {
+                      node.imageOverlays = [];
+                  }
+                  delete node.images;
+              }
+              if(!node.defaultNext && node.nextNode) { node.defaultNext = node.nextNode; delete node.nextNode; }
+            });
+            
+            // Bug 6: release the OUTGOING project's object URLs before we drop it,
+            // otherwise opening several .zip projects in one session leaks memory.
+            (self.project.assets.videos || []).forEach(function(v){
+              if (v.url && v.url.indexOf('blob:') === 0) URL.revokeObjectURL(v.url);
+            });
+            (self.project.assets.images || []).forEach(function(i){
+              if (i.url && i.url.indexOf('blob:') === 0) URL.revokeObjectURL(i.url);
+            });
 
-    function updateGazeProgress(progress, targetMesh = null) {
-      const progressIndicator = reticle.getObjectByName('gazeProgress');
-      if (progressIndicator) {
-        const scale = Math.max(0.001, Math.min(1, progress));
-        progressIndicator.scale.set(scale, scale, scale);
-      }
-      activeChoices.forEach(child => {
-        if (child.material && child.material.color) {
-          const baseColor = child.userData.originalColor !== undefined ? child.userData.originalColor : 0x0969da;
-          if (child.userData.originalColor === undefined) child.userData.originalColor = child.material.color.getHex();
-          child.material.color.setHex(child === targetMesh ? 0x3b82f6 : baseColor);
-        }
+            self.project = loadedProject;
+            self._assetsNeedRelink = missing.length > 0;
+            document.getElementById('projectTitle').value = self.project.title;
+            
+            self.renderCanvas();
+            self.updateStats();
+            self.updateAssetLists();
+            self.deselect();
+
+            // FIX #3: frame the whole imported graph immediately.
+            self.fitView();
+            
+            // Reset history stack
+            self.history = [];
+            self.historyIndex = -1;
+            self.saveState();
+            
+            self.showLoader(false);
+            // Bug 8: don't fail silently when the manifest references files the zip lacks.
+            if (missing.length) {
+              self.showStatus(missing.length + ' asset(s) missing from the project file');
+              alert("These files were referenced but not found in the .zip:\n\n• " + missing.join("\n• "));
+            } else {
+              self.showStatus('Project loaded successfully');
+            }
+          });
+        }).catch(function(err) {
+          self.showLoader(false);
+          alert('Invalid project structure');
+        });
+      }).catch(function(err) {
+        self.showLoader(false);
+        alert('Could not read ZIP file');
       });
-    }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  },
+  
+  export: function() {
+    // Identical to Save but enforcing a .zip extension
+    return this.save(true);
+  }
+};
 
-    // === Media Generators ===
-    function clearOverlays() {
-      while (overlaysGroup.children.length > 0) {
-        const child = overlaysGroup.children[0];
-        overlaysGroup.remove(child);
-        if (child.type === 'Group') child.children.forEach(c => disposeNode(c));
-        else disposeNode(child);
-      }
-      activeChoices = [];
-      gazeTimer = 0;
-      lastIntersectedChoice = null;
-    }
-
-    function disposeNode(child) {
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) {
-        if (child.material.map) child.material.map.dispose();
-        child.material.dispose();
-      }
-    }
-
-    function createImagePlane(url, options = {}) {
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.src = url;
-        img.onload = () => {
-          const aspect = img.width / img.height;
-          const baseWidth = 4;
-          const scale = options.scale || 1;
-          const geo = new THREE.PlaneGeometry(baseWidth * aspect * scale, baseWidth * scale);
-          const tex = new THREE.Texture(img);
-          tex.colorSpace = THREE.SRGBColorSpace;
-          tex.needsUpdate = true;
-          const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
-          resolve(new THREE.Mesh(geo, mat));
-        };
-        img.onerror = () => resolve(null);
-      });
-    }
-
-    function createTextPlane(text, options = {}) {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const logicWidth = options.width || 512;
-      const logicHeight = options.height || 128;
-      const fontSize = options.fontSize || 32;
-      const fontWeight = options.fontWeight || 'normal';
-      const pixelRatio = 3;
-      canvas.width = logicWidth * pixelRatio;
-      canvas.height = logicHeight * pixelRatio;
-      ctx.scale(pixelRatio, pixelRatio);
-
-      const textColor = options.textColor || 'white';
-      const backgroundColor = options.backgroundColor || 'rgba(0,0,0,0.5)';
-      const scale = options.scale || 1;
-      const padding = 20;
-
-      ctx.fillStyle = backgroundColor;
-      ctx.beginPath();
-      const radius = 16;
-      ctx.moveTo(radius, 0);
-      ctx.lineTo(logicWidth - radius, 0);
-      ctx.quadraticCurveTo(logicWidth, 0, logicWidth, radius);
-      ctx.lineTo(logicWidth, logicHeight - radius);
-      ctx.quadraticCurveTo(logicWidth, logicHeight, logicWidth - radius, logicHeight);
-      ctx.lineTo(radius, logicHeight);
-      ctx.quadraticCurveTo(0, logicHeight, 0, logicHeight - radius);
-      ctx.lineTo(0, radius);
-      ctx.quadraticCurveTo(0, 0, radius, 0);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.fillStyle = textColor;
-      ctx.font = `${fontWeight} ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-
-      const words = text.split(' ');
-      let lines = [], line = '';
-      for (let n = 0; n < words.length; n++) {
-        let testLine = line + words[n] + ' ';
-        if (ctx.measureText(testLine).width > logicWidth - padding * 2 && n > 0) { lines.push(line); line = words[n] + ' '; }
-        else line = testLine;
-      }
-      lines.push(line);
-      const lineHeight = fontSize * 1.3;
-      const startY = (logicHeight - (lines.length - 1) * lineHeight) / 2;
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i].trim(), logicWidth / 2, startY + (i * lineHeight));
-
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
-      const geometry = new THREE.PlaneGeometry((logicWidth / 256) * scale, (logicHeight / 256) * scale);
-      return new THREE.Mesh(geometry, material);
-    }
-
-    function updateStatus(message, isError = false) {
-      statusElement.textContent = message;
-      statusElement.style.display = 'block';
-      statusElement.style.background = isError ? 'rgba(220, 38, 38, 0.95)' : 'rgba(17, 24, 39, 0.9)';
-      setTimeout(() => { statusElement.style.display = 'none'; }, isError ? 5000 : 3000);
-    }
-
-    init();
-  </script>
+window.addEventListener('DOMContentLoaded', function() { App.init(); });
+</script>
 </body>
 </html>
